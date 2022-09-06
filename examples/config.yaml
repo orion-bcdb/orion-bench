@@ -1,0 +1,15 @@
+# Example benchmark configuration
+log-level: debug
+session:
+  tx-timeout: 60
+  query-timeout: 60
+material-path: /tmp/orion-benchmark-material
+data-path: /tmp/orion-benchmark-data
+user-count: 5
+workload: independent-increment
+cluster:
+  main:
+    address: http://localhost
+    raft-id: 0
+    node-port: 8000
+    peer-port: 9000
