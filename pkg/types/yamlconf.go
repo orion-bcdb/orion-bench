@@ -1,9 +1,7 @@
 package types
 
 type SessionConf struct {
-	// The transaction timeout given to the database server in case of tx sync commit.
-	TxTimeout int `yaml:"tx-timeout"`
-	// The query timeout - SDK will wait for query result maximum `QueryTimeout` time.
+	TxTimeout    int `yaml:"tx-timeout"`
 	QueryTimeout int `yaml:"query-timeout"`
 }
 

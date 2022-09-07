@@ -1,7 +1,6 @@
 package material
 
 import (
-	"crypto/tls"
 	"path/filepath"
 	"time"
 
@@ -25,6 +24,7 @@ type ServerMaterial struct {
 	name         string
 	server       types.Server
 	crypto       *CryptoMaterial
+	rootCrypto   *CryptoMaterial
 }
 
 func (s *ServerMaterial) Check(err error) {
@@ -51,9 +51,23 @@ func (s *ServerMaterial) SnapPath() string {
 	return filepath.Join(s.dataPath, "etcdraft", "snap")
 }
 
-func (s *ServerMaterial) generate(rootCA tls.Certificate) {
-	s.crypto.generate(rootCA, s.server.Address)
+func (s *ServerMaterial) generate() {
+	s.crypto.generate(s.rootCrypto, s.server.Address)
 	s.GenerateServerConfigFile()
+}
+
+func (s *ServerMaterial) TLS() config.TLSConf {
+	return config.TLSConf{
+		Enabled:            false,
+		ClientAuthRequired: false,
+		//ServerCertificatePath: s.crypto.CertPath(),
+		//ServerKeyPath:         s.crypto.KeyPath(),
+		//ClientCertificatePath: s.crypto.CertPath(),
+		//ClientKeyPath:         s.crypto.KeyPath(),
+		//CaConfig: config.CAConfiguration{
+		//	RootCACertsPath: []string{s.rootCrypto.CertPath()},
+		//},
+	}
 }
 
 func (s *ServerMaterial) GenerateServerConfigFile() {
@@ -78,6 +92,7 @@ func (s *ServerMaterial) GenerateServerConfigFile() {
 				Block:                     100,
 			},
 			LogLevel: "info",
+			TLS:      s.TLS(),
 		},
 		BlockCreation: config.BlockCreationConf{
 			MaxBlockSize:                1024 * 1024,
@@ -89,11 +104,9 @@ func (s *ServerMaterial) GenerateServerConfigFile() {
 			SnapDir: s.SnapPath(),
 			Network: config.NetworkConf{
 				Address: s.server.Address,
-				Port:    s.server.NodePort,
+				Port:    s.server.PeerPort,
 			},
-			TLS: config.TLSConf{
-				Enabled: false,
-			},
+			TLS: s.TLS(),
 		},
 		Bootstrap: config.BootstrapConf{
 			Method: "genesis",

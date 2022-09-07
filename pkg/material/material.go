@@ -1,7 +1,6 @@
 package material
 
 import (
-	"crypto/tls"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,21 +9,26 @@ import (
 	"orion-bench/pkg/types"
 	"orion-bench/pkg/utils"
 
+	sdkconfig "github.com/hyperledger-labs/orion-sdk-go/pkg/config"
 	"github.com/hyperledger-labs/orion-server/config"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
-	"github.com/hyperledger-labs/orion-server/pkg/server/testutils"
 	"github.com/hyperledger-labs/orion-server/test/setup"
 )
 
 type BenchMaterial struct {
-	lg           *logger.SugarLogger
-	MaterialPath string
-	DataPath     string
-	Cluster      types.Cluster
+	lg     *logger.SugarLogger
+	config *types.YamlConfig
 
 	// Evaluated lazily
-	users   map[string]*CryptoMaterial
+	crypto  map[string]*CryptoMaterial
 	servers map[string]*ServerMaterial
+}
+
+func New(config *types.YamlConfig, lg *logger.SugarLogger) *BenchMaterial {
+	return &BenchMaterial{
+		lg:     lg,
+		config: config,
+	}
 }
 
 func userIndex(i int) string {
@@ -39,25 +43,25 @@ func (m *BenchMaterial) UserIndex(i int) *CryptoMaterial {
 	return m.User(userIndex(i))
 }
 
-func (m *BenchMaterial) getCrypto(name string) *CryptoMaterial {
-	if m.users == nil {
-		m.users = make(map[string]*CryptoMaterial)
+func (m *BenchMaterial) getCrypto(name string, pathName string) *CryptoMaterial {
+	if m.crypto == nil {
+		m.crypto = make(map[string]*CryptoMaterial)
 	}
 
-	material, ok := m.users[name]
+	material, ok := m.crypto[pathName]
 	if !ok {
 		material = &CryptoMaterial{
 			lg:   m.lg,
 			name: name,
-			path: filepath.Join(m.MaterialPath, name),
+			path: filepath.Join(m.config.MaterialPath, pathName),
 		}
-		m.users[name] = material
+		m.crypto[pathName] = material
 	}
 	return material
 }
 
 func (m *BenchMaterial) User(name string) *CryptoMaterial {
-	return m.getCrypto(fmt.Sprintf(fmtUser, name))
+	return m.getCrypto(name, prefixUser+name)
 }
 
 func (m *BenchMaterial) Server(name string) *ServerMaterial {
@@ -67,14 +71,15 @@ func (m *BenchMaterial) Server(name string) *ServerMaterial {
 
 	server, ok := m.servers[name]
 	if !ok {
-		serverPrefix := fmt.Sprintf(fmtServer, name)
+		pathName := prefixServer + name
 		server = &ServerMaterial{
 			lg:           m.lg,
 			name:         name,
-			materialPath: filepath.Join(m.MaterialPath, serverPrefix),
-			dataPath:     filepath.Join(m.DataPath, serverPrefix),
-			server:       m.Cluster[name],
-			crypto:       m.getCrypto(serverPrefix),
+			materialPath: filepath.Join(m.config.MaterialPath, pathName),
+			dataPath:     filepath.Join(m.config.DataPath, pathName),
+			server:       m.config.Cluster[name],
+			crypto:       m.getCrypto(name, pathName),
+			rootCrypto:   m.User(Root),
 		}
 		m.servers[name] = server
 	}
@@ -90,30 +95,26 @@ func (m *BenchMaterial) GenerateNUsers(n int) {
 }
 
 func (m *BenchMaterial) Generate(users []string) {
-	m.Check(os.RemoveAll(m.MaterialPath))
-	m.Check(os.MkdirAll(m.MaterialPath, perm))
+	m.Check(os.RemoveAll(m.config.MaterialPath))
+	m.Check(os.MkdirAll(m.config.MaterialPath, perm))
 
-	rootUser := m.User(Root)
-	rootCAPemCert, caPrivKey, err := testutils.GenerateRootCA(rootUser.subject(), userHost)
-	m.Check(err)
-	rootUser.write(rootCAPemCert, caPrivKey)
+	root := m.User(Root)
+	root.generateRoot(userHost)
 
-	rootCAkeyPair, err := tls.X509KeyPair(rootCAPemCert, caPrivKey)
-	m.Check(err)
 	for _, name := range append(users, Admin) {
-		m.User(name).generate(rootCAkeyPair, userHost)
+		m.User(name).generate(root, userHost)
 	}
 
 	m.GenerateBootstrapFile()
-	for name := range m.Cluster {
-		m.Server(name).generate(rootCAkeyPair)
+	for name := range m.config.Cluster {
+		m.Server(name).generate()
 	}
 }
 
 func (m *BenchMaterial) List() []string {
-	files, err := os.ReadDir(m.MaterialPath)
+	files, err := os.ReadDir(m.config.MaterialPath)
 	m.Check(err)
-	var users []string
+	var material []string
 	for _, f := range files {
 		if f.IsDir() {
 			continue
@@ -122,9 +123,32 @@ func (m *BenchMaterial) List() []string {
 		if ext != ".key" {
 			continue
 		}
-		users = append(users, strings.TrimSuffix(f.Name(), ext))
+		material = append(material, strings.TrimSuffix(f.Name(), ext))
+	}
+	return material
+}
+
+func (m *BenchMaterial) ListUsers() []*CryptoMaterial {
+	var users []*CryptoMaterial
+	for _, material := range m.List() {
+		if !strings.HasPrefix(material, prefixUser) {
+			continue
+		}
+		userName := strings.TrimPrefix(material, prefixUser)
+		users = append(users, m.User(userName))
 	}
 	return users
+}
+
+func (m *BenchMaterial) ServerTLS() sdkconfig.ServerTLSConfig {
+	return sdkconfig.ServerTLSConfig{
+		Enabled: false,
+		//ClientAuthRequired: true,
+		//CaConfig: config.CAConfiguration{
+		//	RootCACertsPath:         []string{m.User(Root).CertPath()},
+		//	IntermediateCACertsPath: nil,
+		//},
+	}
 }
 
 func (m *BenchMaterial) GenerateBootstrapFile() {
@@ -152,7 +176,7 @@ func (m *BenchMaterial) GenerateBootstrapFile() {
 		},
 	}
 
-	for serverID, s := range m.Cluster {
+	for serverID, s := range m.config.Cluster {
 		sharedConfig.Consensus.Members = append(
 			sharedConfig.Consensus.Members,
 			&config.PeerConf{
@@ -164,7 +188,7 @@ func (m *BenchMaterial) GenerateBootstrapFile() {
 		)
 	}
 
-	for serverID, s := range m.Cluster {
+	for serverID, s := range m.config.Cluster {
 		sharedConfig.Nodes = append(sharedConfig.Nodes, &config.NodeConf{
 			NodeID:          serverID,
 			Host:            s.Address,
@@ -173,7 +197,7 @@ func (m *BenchMaterial) GenerateBootstrapFile() {
 		})
 	}
 
-	for serverID := range m.Cluster {
+	for serverID := range m.config.Cluster {
 		m.Check(setup.WriteSharedConfig(sharedConfig, m.Server(serverID).BootstrapConfPath()))
 	}
 }

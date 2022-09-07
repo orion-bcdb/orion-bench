@@ -8,6 +8,7 @@ $(BIN):
 .PHONY: binary
 binary:
 	go build -o $(BIN)/orion-bench cmd/orion-bench/main.go
+	go build -o $(BIN)/bdb github.com/hyperledger-labs/orion-server/cmd/bdb
 
 .PHONY: clean
 clean:

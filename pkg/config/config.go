@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"orion-bench/pkg/material"
@@ -13,18 +14,19 @@ import (
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
 	sdkconfig "github.com/hyperledger-labs/orion-sdk-go/pkg/config"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
 type OrionBenchConfig struct {
-	types.YamlConfig `yaml:",inline"`
+	lg         *logger.SugarLogger
+	YamlConfig *types.YamlConfig `yaml:",inline"`
 
 	// Evaluated lazily
-	lg       *logger.SugarLogger       `yaml:"-"`
-	crypto   *material.BenchMaterial   `yaml:"-"`
-	db       bcdb.BCDB                 `yaml:"-"`
-	workload workload.Workload         `yaml:"-"`
-	sessions map[string]bcdb.DBSession `yaml:"-"`
+	material *material.BenchMaterial
+	db       bcdb.BCDB
+	workload workload.Workload
+	sessions map[string]bcdb.DBSession
 }
 
 func ReadConfig(path string) *OrionBenchConfig {
@@ -33,90 +35,108 @@ func ReadConfig(path string) *OrionBenchConfig {
 		log.Fatalf("Failed to read configuration file from: %s. With error: %s", path, err)
 	}
 
-	config := &OrionBenchConfig{}
-	err = yaml.Unmarshal(binConfig, &config)
+	config := &types.YamlConfig{}
+	err = yaml.Unmarshal(binConfig, config)
 	if err != nil {
 		log.Fatalf("Failed to parse configuration file from: %s. With error: %s", path, err)
 	}
 
-	return config
-}
-
-func (c *OrionBenchConfig) Log() *logger.SugarLogger {
-	if c.lg == nil {
-		loggerConf := &logger.Config{
-			Level:         c.LogLevel,
-			OutputPath:    []string{"stdout"},
-			ErrOutputPath: []string{"stderr"},
-			Encoding:      "console",
-			Name:          "orion-bench",
-		}
-		lg, err := logger.New(loggerConf)
-		if err != nil {
-			log.Fatalf("Failed to create logger. With error: %s", err)
-		}
-		c.lg = lg
+	loggerConf := &logger.Config{
+		Level:         config.LogLevel,
+		OutputPath:    []string{"stdout"},
+		ErrOutputPath: []string{"stderr"},
+		Encoding:      "console",
+		Name:          "orion-bench",
 	}
-	return c.lg
+	lg, err := logger.New(loggerConf, zap.AddCallerSkip(0))
+	if err != nil {
+		log.Fatalf("Failed to create logger. With error: %s", err)
+	}
+
+	return &OrionBenchConfig{
+		YamlConfig: config,
+		lg:         lg,
+	}
 }
 
 func (c *OrionBenchConfig) Check(err error) {
-	utils.Check(c.lg, err)
+	if err != nil {
+		utils.Check(c.lg, err)
+	}
+}
+
+func (c *OrionBenchConfig) Log() *logger.SugarLogger {
+	return c.lg
+}
+
+func (c *OrionBenchConfig) Config() *types.YamlConfig {
+	return c.YamlConfig
 }
 
 func (c *OrionBenchConfig) Material() *material.BenchMaterial {
-	if c.crypto == nil {
-		c.crypto = &material.BenchMaterial{
-			MaterialPath: c.MaterialPath,
-			DataPath:     c.DataPath,
-			Cluster:      c.Cluster,
-		}
+	if c.material != nil {
+		return c.material
 	}
-	return c.crypto
+
+	c.material = material.New(c.YamlConfig, c.lg)
+	return c.material
+}
+
+func (c *OrionBenchConfig) Replicas() []*sdkconfig.Replica {
+	var replicas []*sdkconfig.Replica
+	for serverId, s := range c.YamlConfig.Cluster {
+		replicas = append(replicas, &sdkconfig.Replica{
+			ID:       serverId,
+			Endpoint: "http://" + s.Address + ":" + strconv.Itoa(int(s.NodePort)),
+		})
+	}
+	return replicas
 }
 
 func (c *OrionBenchConfig) DB() bcdb.BCDB {
-	if c.db == nil {
-		c.Log().Infof("Servers: %v", c.Cluster)
-
-		var replicas []*sdkconfig.Replica
-		for serverId, s := range c.Cluster {
-			replicas = append(replicas, &sdkconfig.Replica{
-				ID:       serverId,
-				Endpoint: s.Address,
-			})
-		}
-		db, err := bcdb.Create(&sdkconfig.ConnectionConfig{
-			ReplicaSet: replicas,
-			RootCAs:    []string{c.Material().User(material.Root).CertPath()},
-			Logger:     c.Log(),
-		})
-		c.Check(err)
-		c.db = db
+	if c.db != nil {
+		return c.db
 	}
+
+	db, err := bcdb.Create(&sdkconfig.ConnectionConfig{
+		ReplicaSet: c.Replicas(),
+		RootCAs:    []string{c.Material().User(material.Root).CertPath()},
+		Logger:     c.lg,
+		//TLSConfig:  c.Material().ServerTLS(),
+	})
+	c.Check(err)
+	c.db = db
 	return c.db
 }
 
-func (c *OrionBenchConfig) Workload() workload.Workload {
-	if c.workload == nil {
-		c.workload = workload.BuildWorkload(c.WorkloadName, c)
-	}
-	return c.workload
-}
-
 func (c *OrionBenchConfig) UserSession(user string) bcdb.DBSession {
+	if c.sessions == nil {
+		c.sessions = make(map[string]bcdb.DBSession)
+	}
+
 	session, ok := c.sessions[user]
 	if ok {
 		return session
 	}
 
+	userCrypto := c.Material().User(user)
 	session, err := c.DB().Session(&sdkconfig.SessionConfig{
-		UserConfig:   c.Material().User(user).Config(),
-		TxTimeout:    time.Duration(c.Session.TxTimeout) * time.Second,
-		QueryTimeout: time.Duration(c.Session.QueryTimeout) * time.Second,
+		UserConfig:   userCrypto.Config(),
+		TxTimeout:    time.Duration(c.YamlConfig.Session.TxTimeout) * time.Second,
+		QueryTimeout: time.Duration(c.YamlConfig.Session.QueryTimeout) * time.Second,
+		//ClientTLS:    userCrypto.TLS(),
 	})
 	c.Check(err)
 
 	c.sessions[user] = session
 	return session
+}
+
+func (c *OrionBenchConfig) Workload() workload.Workload {
+	if c.workload != nil {
+		return c.workload
+	}
+
+	c.workload = workload.BuildWorkload(c)
+	return c.workload
 }

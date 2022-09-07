@@ -8,11 +8,11 @@ import (
 
 var ops = map[string]cmd.OpFunction{
 	"material": func(args *cmd.CommandLineArgs) {
-		args.Config.Material().GenerateNUsers(args.Config.UserCount)
-		log.Println(args.Config.Material().List())
+		args.Config.Material().GenerateNUsers(args.Config.Config().UserCount)
+		log.Println(args.Config.Material().ListUsers())
 	},
 	"list": func(args *cmd.CommandLineArgs) {
-		log.Println(args.Config.Material().List())
+		log.Println(args.Config.Material().ListUsers())
 	},
 	"init": func(args *cmd.CommandLineArgs) {
 		args.Config.Workload().Init()
@@ -25,5 +25,7 @@ var ops = map[string]cmd.OpFunction{
 func main() {
 	args := cmd.ParseCommandLine(ops)
 	args.Print()
-	args.OpFunc(args)
+	for _, f := range args.OpFunc {
+		f(args)
+	}
 }

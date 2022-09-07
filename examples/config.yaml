@@ -9,7 +9,7 @@ user-count: 5
 workload: independent-increment
 cluster:
   main:
-    address: http://localhost
-    raft-id: 0
-    node-port: 8000
-    peer-port: 9000
+    address: 127.0.0.1
+    raft-id: 1
+    node-port: 6000
+    peer-port: 7000

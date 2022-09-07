@@ -18,21 +18,23 @@ import (
 const (
 	Root         = "root"
 	Admin        = "admin"
-	fmtUser      = "user-%s"
-	fmtServer    = "server-%s"
+	prefixUser   = "user-"
+	prefixServer = "server-"
 	fmtUserIndex = "U%05d"
-	fmtSubject   = "Orion cert for %s"
+	fmtSubject   = "Orion %s CA"
 	perm         = 0766
 	userHost     = "127.0.0.1"
 )
 
 type CryptoMaterial struct {
-	lg *logger.SugarLogger
+	lg   *logger.SugarLogger
+	name string
+	path string
 
-	name   string
-	path   string
-	cert   *x509.Certificate
-	signer crypto.Signer
+	// Evaluated lazily
+	cert    *x509.Certificate
+	signer  crypto.Signer
+	keyPair *tls.Certificate
 }
 
 func (u *CryptoMaterial) Check(err error) {
@@ -49,10 +51,26 @@ func (u *CryptoMaterial) write(cert []byte, key []byte) {
 	}
 }
 
-func (u *CryptoMaterial) generate(rootCA tls.Certificate, host string) {
-	pemCert, privKey, err := testutils.IssueCertificate(u.subject(), host, rootCA)
+func (u *CryptoMaterial) generateRoot(host string) {
+	if u.name != Root {
+		u.lg.Fatalf("Attempt to generate root certificate with non root user (%s).", u.name)
+	}
+	pemCert, privKey, err := testutils.GenerateRootCA(u.subject(), host)
 	u.Check(err)
 	u.write(pemCert, privKey)
+}
+
+func (u *CryptoMaterial) generate(root *CryptoMaterial, host string) {
+	if u.name == Root {
+		u.lg.Fatalf("Attempt to generate non-root certificate with root user.")
+	}
+	pemCert, privKey, err := testutils.IssueCertificate(u.subject(), host, *root.KeyPair())
+	u.Check(err)
+	u.write(pemCert, privKey)
+}
+
+func (u *CryptoMaterial) Name() string {
+	return u.name
 }
 
 func (u *CryptoMaterial) CertPath() string {
@@ -71,11 +89,14 @@ func (u *CryptoMaterial) Config() *config.UserConfig {
 	}
 }
 
-func (u *CryptoMaterial) Cert() *x509.Certificate {
-	if u.cert != nil {
-		return u.cert
+func (u *CryptoMaterial) TLS() config.ClientTLSConfig {
+	return config.ClientTLSConfig{
+		//ClientCertificatePath: u.CertPath(),
+		//ClientKeyPath:         u.KeyPath(),
 	}
+}
 
+func (u *CryptoMaterial) Cert() *x509.Certificate {
 	b, err := os.ReadFile(u.CertPath())
 	u.Check(err)
 	bl, _ := pem.Decode(b)
@@ -103,4 +124,15 @@ func (u *CryptoMaterial) Signer() crypto.Signer {
 
 	u.signer = signer
 	return signer
+}
+
+func (u *CryptoMaterial) KeyPair() *tls.Certificate {
+	if u.keyPair != nil {
+		return u.keyPair
+	}
+	keyPair, err := tls.LoadX509KeyPair(u.CertPath(), u.KeyPath())
+	u.Check(err)
+
+	u.keyPair = &keyPair
+	return u.keyPair
 }
