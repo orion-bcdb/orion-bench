@@ -128,13 +128,24 @@ func (m *BenchMaterial) List() []string {
 	return material
 }
 
-func (m *BenchMaterial) ListUsers() []*CryptoMaterial {
-	var users []*CryptoMaterial
+func (m *BenchMaterial) ListUserNames() []string {
+	var users []string
 	for _, material := range m.List() {
 		if !strings.HasPrefix(material, prefixUser) {
 			continue
 		}
 		userName := strings.TrimPrefix(material, prefixUser)
+		if userName == Root || userName == Admin {
+			continue
+		}
+		users = append(users, userName)
+	}
+	return users
+}
+
+func (m *BenchMaterial) ListUsers() []*CryptoMaterial {
+	var users []*CryptoMaterial
+	for _, userName := range m.ListUserNames() {
 		users = append(users, m.User(userName))
 	}
 	return users

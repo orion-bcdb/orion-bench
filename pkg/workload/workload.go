@@ -82,9 +82,6 @@ func (m *commonWorkload) AddUsers(dbName ...string) {
 	defer m.Abort(tx)
 
 	for _, user := range m.config.Material().ListUsers() {
-		if user.Name() == material.Admin || user.Name() == material.Root {
-			continue
-		}
 		userRecord := &oriontypes.User{
 			Id:          user.Name(),
 			Certificate: user.Cert().Raw,
