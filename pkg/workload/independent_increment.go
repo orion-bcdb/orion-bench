@@ -10,7 +10,7 @@ import (
 const tableName = "counters"
 
 type IndependentIncrement struct {
-	commonWorkload
+	CommonWorkload
 }
 
 type TableData struct {
@@ -22,27 +22,24 @@ func (w *IndependentIncrement) Init() {
 	w.AddUsers(tableName)
 }
 
-func (w *IndependentIncrement) UserInc(user string) {
-	tx, err := w.config.UserSession(user).DataTx()
-	w.Check(err)
-	defer w.Abort(tx)
-
-	record := &TableData{}
-	rawRecord, _, err := tx.Get(tableName, user)
-	w.Check(err)
-	if rawRecord == nil {
-		record.Counter = 0
-	} else {
-		w.Check(json.Unmarshal(rawRecord, record))
+func (w *IndependentIncrement) workerUsers() []string {
+	allUsers := w.material.ListUserNames()
+	r := w.workerRank
+	c := w.config.Workload.WorkerCount
+	var users []string
+	for i := r; i < len(allUsers); i += c {
+		users = append(users, allUsers[i])
 	}
-	record.Counter += 1
-	w.Check(tx.Put(tableName, user, rawRecord, &oriontypes.AccessControl{
-		ReadWriteUsers: map[string]bool{
-			user: true,
-		},
-		SignPolicyForWrite: oriontypes.AccessControl_ALL,
-	}))
-	w.Commit(tx)
+	return users
+}
+
+func (w *IndependentIncrement) Run() {
+	var wg sync.WaitGroup
+	for _, user := range w.workerUsers() {
+		wg.Add(1)
+		go w.UserRun(&wg, user)
+	}
+	wg.Wait()
 }
 
 func (w *IndependentIncrement) UserRun(wg *sync.WaitGroup, user string) {
@@ -53,11 +50,25 @@ func (w *IndependentIncrement) UserRun(wg *sync.WaitGroup, user string) {
 	wg.Done()
 }
 
-func (w *IndependentIncrement) Run(_ int) {
-	var wg sync.WaitGroup
-	for _, user := range w.config.Material().ListUserNames() {
-		wg.Add(1)
-		go w.UserRun(&wg, user)
+func (w *IndependentIncrement) UserInc(user string) {
+	tx, err := w.UserSession(user).DataTx()
+	w.Check(err)
+	defer w.Abort(tx)
+
+	record := &TableData{Counter: 0}
+	rawRecord, _, err := tx.Get(tableName, user)
+	w.Check(err)
+	if rawRecord != nil {
+		w.Check(json.Unmarshal(rawRecord, record))
 	}
-	wg.Wait()
+
+	record.Counter += 1
+	w.Check(tx.Put(tableName, user, rawRecord, &oriontypes.AccessControl{
+		ReadWriteUsers: map[string]bool{
+			user: true,
+		},
+		SignPolicyForWrite: oriontypes.AccessControl_ALL,
+	}))
+
+	w.Commit(tx)
 }

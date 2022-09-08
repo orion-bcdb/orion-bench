@@ -5,8 +5,11 @@ session:
   query-timeout: 60
 material-path: /tmp/orion-benchmark-material
 data-path: /tmp/orion-benchmark-data
-user-count: 5
-workload: independent-increment
+workload:
+  name: independent-increment
+  user-count: 5
+  # Each worker might run many parallel workloads
+  worker-count: 1
 cluster:
   main:
     address: 127.0.0.1

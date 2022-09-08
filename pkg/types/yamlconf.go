@@ -1,5 +1,11 @@
 package types
 
+type WorkloadConf struct {
+	Name        string `yaml:"name"`
+	UserCount   int    `yaml:"user-count"`
+	WorkerCount int    `yaml:"worker-count"`
+}
+
 type SessionConf struct {
 	TxTimeout    int `yaml:"tx-timeout"`
 	QueryTimeout int `yaml:"query-timeout"`
@@ -15,11 +21,10 @@ type Server struct {
 type Cluster map[string]Server
 
 type YamlConfig struct {
-	LogLevel     string      `yaml:"log-level"`
-	Session      SessionConf `yaml:"session"`
-	MaterialPath string      `yaml:"material-path"`
-	DataPath     string      `yaml:"data-path"`
-	UserCount    int         `yaml:"user-count"`
-	WorkloadName string      `yaml:"workload"`
-	Cluster      Cluster     `yaml:"cluster"`
+	LogLevel     string       `yaml:"log-level"`
+	Session      SessionConf  `yaml:"session"`
+	MaterialPath string       `yaml:"material-path"`
+	DataPath     string       `yaml:"data-path"`
+	Workload     WorkloadConf `yaml:"workload"`
+	Cluster      Cluster      `yaml:"cluster"`
 }

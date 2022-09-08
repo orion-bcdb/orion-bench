@@ -1,76 +1,56 @@
 package config
 
 import (
-	"log"
+	"fmt"
 	"os"
-	"strconv"
-	"time"
 
 	"orion-bench/pkg/material"
 	"orion-bench/pkg/types"
 	"orion-bench/pkg/utils"
 	"orion-bench/pkg/workload"
 
-	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
-	sdkconfig "github.com/hyperledger-labs/orion-sdk-go/pkg/config"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
-	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
 type OrionBenchConfig struct {
-	lg         *logger.SugarLogger
-	YamlConfig *types.YamlConfig `yaml:",inline"`
+	lg     *logger.SugarLogger
+	Cmd    *CommandLineArgs `yaml:"command-line"`
+	Config types.YamlConfig `yaml:"config"`
 
 	// Evaluated lazily
 	material *material.BenchMaterial
-	db       bcdb.BCDB
 	workload workload.Workload
-	sessions map[string]bcdb.DBSession
 }
 
-func ReadConfig(path string) *OrionBenchConfig {
-	binConfig, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("Failed to read configuration file from: %s. With error: %s", path, err)
-	}
+func ReadConfig(cmd *CommandLineArgs) *OrionBenchConfig {
+	binConfig, err := os.ReadFile(cmd.ConfigPath)
+	utils.CheckDefault(err)
 
-	config := &types.YamlConfig{}
-	err = yaml.Unmarshal(binConfig, config)
-	if err != nil {
-		log.Fatalf("Failed to parse configuration file from: %s. With error: %s", path, err)
-	}
+	c := &OrionBenchConfig{Cmd: cmd}
+	utils.CheckDefault(yaml.Unmarshal(binConfig, &c.Config))
 
 	loggerConf := &logger.Config{
-		Level:         config.LogLevel,
+		Level:         c.Config.LogLevel,
 		OutputPath:    []string{"stdout"},
 		ErrOutputPath: []string{"stderr"},
 		Encoding:      "console",
 		Name:          "orion-bench",
 	}
-	lg, err := logger.New(loggerConf, zap.AddCallerSkip(0))
-	if err != nil {
-		log.Fatalf("Failed to create logger. With error: %s", err)
-	}
+	c.lg, err = logger.New(loggerConf)
+	utils.CheckDefault(err)
 
-	return &OrionBenchConfig{
-		YamlConfig: config,
-		lg:         lg,
-	}
+	return c
+}
+
+func (c *OrionBenchConfig) Print() {
+	s, err := yaml.Marshal(c)
+	c.Check(err)
+	fmt.Println(string(s))
 }
 
 func (c *OrionBenchConfig) Check(err error) {
-	if err != nil {
-		utils.Check(c.lg, err)
-	}
-}
-
-func (c *OrionBenchConfig) Log() *logger.SugarLogger {
-	return c.lg
-}
-
-func (c *OrionBenchConfig) Config() *types.YamlConfig {
-	return c.YamlConfig
+	utils.Check(c.lg, err)
 }
 
 func (c *OrionBenchConfig) Material() *material.BenchMaterial {
@@ -78,58 +58,8 @@ func (c *OrionBenchConfig) Material() *material.BenchMaterial {
 		return c.material
 	}
 
-	c.material = material.New(c.YamlConfig, c.lg)
+	c.material = material.New(&c.Config, c.lg)
 	return c.material
-}
-
-func (c *OrionBenchConfig) Replicas() []*sdkconfig.Replica {
-	var replicas []*sdkconfig.Replica
-	for serverId, s := range c.YamlConfig.Cluster {
-		replicas = append(replicas, &sdkconfig.Replica{
-			ID:       serverId,
-			Endpoint: "http://" + s.Address + ":" + strconv.Itoa(int(s.NodePort)),
-		})
-	}
-	return replicas
-}
-
-func (c *OrionBenchConfig) DB() bcdb.BCDB {
-	if c.db != nil {
-		return c.db
-	}
-
-	db, err := bcdb.Create(&sdkconfig.ConnectionConfig{
-		ReplicaSet: c.Replicas(),
-		RootCAs:    []string{c.Material().User(material.Root).CertPath()},
-		Logger:     c.lg,
-		//TLSConfig:  c.Material().ServerTLS(),
-	})
-	c.Check(err)
-	c.db = db
-	return c.db
-}
-
-func (c *OrionBenchConfig) UserSession(user string) bcdb.DBSession {
-	if c.sessions == nil {
-		c.sessions = make(map[string]bcdb.DBSession)
-	}
-
-	session, ok := c.sessions[user]
-	if ok {
-		return session
-	}
-
-	userCrypto := c.Material().User(user)
-	session, err := c.DB().Session(&sdkconfig.SessionConfig{
-		UserConfig:   userCrypto.Config(),
-		TxTimeout:    time.Duration(c.YamlConfig.Session.TxTimeout) * time.Second,
-		QueryTimeout: time.Duration(c.YamlConfig.Session.QueryTimeout) * time.Second,
-		//ClientTLS:    userCrypto.TLS(),
-	})
-	c.Check(err)
-
-	c.sessions[user] = session
-	return session
 }
 
 func (c *OrionBenchConfig) Workload() workload.Workload {
@@ -137,6 +67,6 @@ func (c *OrionBenchConfig) Workload() workload.Workload {
 		return c.workload
 	}
 
-	c.workload = workload.BuildWorkload(c)
+	c.workload = workload.New(c.Cmd.WorkerRank, &c.Config, c.Material(), c.lg)
 	return c.workload
 }
