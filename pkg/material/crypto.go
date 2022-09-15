@@ -19,8 +19,9 @@ const (
 	Root         = "root"
 	Admin        = "admin"
 	prefixUser   = "user-"
-	prefixServer = "server-"
+	prefixNode   = "node-"
 	fmtUserIndex = "U%05d"
+	fmtNodeIndex = "N%05d"
 	fmtSubject   = "Orion %s CA"
 	perm         = 0766
 	userHost     = "127.0.0.1"
@@ -51,11 +52,11 @@ func (u *CryptoMaterial) write(cert []byte, key []byte) {
 	}
 }
 
-func (u *CryptoMaterial) generateRoot(host string) {
+func (u *CryptoMaterial) generateRoot() {
 	if u.name != Root {
 		u.lg.Fatalf("Attempt to generate root certificate with non root user (%s).", u.name)
 	}
-	pemCert, privKey, err := testutils.GenerateRootCA(u.subject(), host)
+	pemCert, privKey, err := testutils.GenerateRootCA(u.subject(), userHost)
 	u.Check(err)
 	u.write(pemCert, privKey)
 }

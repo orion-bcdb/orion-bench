@@ -15,12 +15,12 @@ import (
 
 type OrionBenchConfig struct {
 	lg     *logger.SugarLogger
-	Cmd    *CommandLineArgs `yaml:"command-line"`
-	Config types.YamlConfig `yaml:"config"`
+	Cmd    *CommandLineArgs    `yaml:"command-line"`
+	Config types.BenchmarkConf `yaml:"config"`
 
 	// Evaluated lazily
 	material *material.BenchMaterial
-	workload workload.Workload
+	workload workload.Runner
 }
 
 func ReadConfig(cmd *CommandLineArgs) *OrionBenchConfig {
@@ -62,11 +62,15 @@ func (c *OrionBenchConfig) Material() *material.BenchMaterial {
 	return c.material
 }
 
-func (c *OrionBenchConfig) Workload() workload.Workload {
+func (c *OrionBenchConfig) Workload() workload.Runner {
 	if c.workload != nil {
 		return c.workload
 	}
 
-	c.workload = workload.New(c.Cmd.WorkerRank, &c.Config, c.Material(), c.lg)
+	c.workload = workload.New(c.Cmd.Rank, &c.Config, c.Material(), c.lg)
 	return c.workload
+}
+
+func (c *OrionBenchConfig) Node() *material.NodeMaterial {
+	return c.Material().Node(c.Cmd.Rank)
 }

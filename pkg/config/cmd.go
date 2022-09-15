@@ -4,132 +4,71 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
-	"strings"
 )
 
-type OpNameList []string
-
-func (o *OpNameList) String() string {
-	return strings.Join(*o, `, `)
-}
-
-func (o *OpNameList) Set(value string) error {
-	*o = append(*o, value)
-	return nil
-}
-
-func (o *OpNameList) Exist(value string) bool {
-	for _, v := range *o {
-		if v == value {
-			return true
-		}
-	}
-	return false
-}
-
 type OpFunction func(args *OrionBenchConfig)
-type OrderedOpFunction struct {
-	name     string
+type NamedOpFunction struct {
+	Name     string
+	Selected bool
 	function OpFunction
 }
-type OpMap []OrderedOpFunction
+type CmdOperations struct {
+	OpList []*NamedOpFunction
+}
 
-func (m *OpMap) Add(name string, f OpFunction) *OpMap {
-	*m = append(*m, OrderedOpFunction{
-		name:     name,
+func NewCmd() *CmdOperations {
+	return &CmdOperations{}
+}
+
+func (o *CmdOperations) Add(name string, f OpFunction) *CmdOperations {
+	o.OpList = append(o.OpList, &NamedOpFunction{
+		Name:     name,
 		function: f,
+		Selected: false,
 	})
-	return m
+	return o
 }
 
-func (m *OpMap) Names() *OpNameList {
-	opFunctions := make(OpNameList, len(*m))
-	for i, f := range *m {
-		opFunctions[i] = f.name
-	}
-	return &opFunctions
-}
-
-func (m *OpMap) Exist(value string) bool {
-	for _, v := range *m {
-		if v.name == value {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *OpMap) Validate(names OpNameList) {
-	for _, v := range names {
-		if !m.Exist(v) {
-			log.Fatalf("Invalid op: '%s'. Options: %s.", v, m.Names())
+func (o *CmdOperations) ApplyAll(conf *OrionBenchConfig) {
+	for _, op := range o.OpList {
+		if op.Selected {
+			conf.lg.Infof("Running operation: %s", op.Name)
+			op.function(conf)
 		}
 	}
 }
 
-func (m *OpMap) Subset(names OpNameList) OpMap {
-	opFunctions := OpMap{}
-	for _, f := range *m {
-		if names.Exist(f.name) {
-			opFunctions.Add(f.name, f.function)
+func (o *CmdOperations) MarshalYAML() (interface{}, error) {
+	var ret []string
+	for _, f := range o.OpList {
+		if f.Selected {
+			ret = append(ret, f.Name)
 		}
 	}
-	return opFunctions
+	return ret, nil
 }
-
-func (o *OpNameList) ApplyAll(c *OrionBenchConfig) {
-	for _, f := range ops.Subset(*o) {
-		f.function(c)
-	}
-}
-
-var ops = (&OpMap{}).Add(
-	"clear", func(c *OrionBenchConfig) {
-		c.Check(os.RemoveAll(c.Config.MaterialPath))
-		c.Check(os.RemoveAll(c.Config.DataPath))
-	}).Add(
-	"material", func(c *OrionBenchConfig) {
-		c.Material().GenerateNUsers(c.Config.Workload.UserCount)
-		log.Println(c.Material().List())
-	}).Add(
-	"list", func(c *OrionBenchConfig) {
-		log.Println(c.Material().List())
-	}).Add(
-	"users", func(c *OrionBenchConfig) {
-		log.Println(c.Material().ListUserNames())
-	}).Add(
-	"init", func(c *OrionBenchConfig) {
-		c.Workload().Init()
-	}).Add(
-	"run", func(c *OrionBenchConfig) {
-		c.Workload().Run()
-	})
 
 type CommandLineArgs struct {
-	ConfigPath string     `yaml:"config-path"`
-	Op         OpNameList `yaml:"op"`
-	WorkerRank int        `yaml:"worker"`
+	ConfigPath string         `yaml:"config-path"`
+	Op         *CmdOperations `yaml:"op,flow"`
+	Rank       uint64         `yaml:"rank"`
 }
 
-func ParseCommandLine() *CommandLineArgs {
-	args := &CommandLineArgs{}
+func ParseCommandLine(ops *CmdOperations) *CommandLineArgs {
+	args := &CommandLineArgs{Op: ops}
 	flag.StringVar(&args.ConfigPath, "config", "",
 		"Benchmark configuration YAML file path.")
-	flag.Var(&args.Op, "op",
-		fmt.Sprintf("Benchmark operation: %s.", ops.Names()))
-	flag.IntVar(&args.WorkerRank, "worker", 0,
-		"Worker rank (starting from 0).")
+	for _, op := range ops.OpList {
+		flag.BoolVar(&op.Selected, op.Name, false,
+			fmt.Sprintf("Benchmark operation: %s.", op.Name))
+	}
+	flag.Uint64Var(&args.Rank, "rank", 0,
+		"Worker/node rank (starting from 0).")
 	flag.Parse()
 
 	if args.ConfigPath == "" {
 		log.Fatalf("Empty config path")
 	}
 
-	if args.WorkerRank < 0 {
-		log.Fatalf("Invalid worker rank: %d", args.WorkerRank)
-	}
-
-	ops.Validate(args.Op)
 	return args
 }

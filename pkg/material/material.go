@@ -5,114 +5,146 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"orion-bench/pkg/types"
 	"orion-bench/pkg/utils"
 
 	sdkconfig "github.com/hyperledger-labs/orion-sdk-go/pkg/config"
-	"github.com/hyperledger-labs/orion-server/config"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
-	"github.com/hyperledger-labs/orion-server/test/setup"
 )
 
 type BenchMaterial struct {
-	lg     *logger.SugarLogger
-	config *types.YamlConfig
-
-	// Evaluated lazily
-	crypto  map[string]*CryptoMaterial
-	servers map[string]*ServerMaterial
+	lg         *logger.SugarLogger
+	config     *types.BenchmarkConf
+	crypto     sync.Map
+	servers    sync.Map
+	prometheus *PrometheusMaterial
 }
 
-func New(config *types.YamlConfig, lg *logger.SugarLogger) *BenchMaterial {
+func New(config *types.BenchmarkConf, lg *logger.SugarLogger) *BenchMaterial {
 	return &BenchMaterial{
 		lg:     lg,
 		config: config,
 	}
 }
 
-func userIndex(i int) string {
+func userIndex(i uint64) string {
 	return fmt.Sprintf(fmtUserIndex, i)
+}
+
+func nodeIndex(i uint64) string {
+	return fmt.Sprintf(fmtNodeIndex, i)
 }
 
 func (m *BenchMaterial) Check(err error) {
 	utils.Check(m.lg, err)
 }
 
-func (m *BenchMaterial) UserIndex(i int) *CryptoMaterial {
-	return m.User(userIndex(i))
-}
-
 func (m *BenchMaterial) getCrypto(name string, pathName string) *CryptoMaterial {
-	if m.crypto == nil {
-		m.crypto = make(map[string]*CryptoMaterial)
+	material, ok := m.crypto.Load(pathName)
+	if ok {
+		return material.(*CryptoMaterial)
 	}
 
-	material, ok := m.crypto[pathName]
-	if !ok {
-		material = &CryptoMaterial{
-			lg:   m.lg,
-			name: name,
-			path: filepath.Join(m.config.MaterialPath, pathName),
-		}
-		m.crypto[pathName] = material
+	material = &CryptoMaterial{
+		lg:   m.lg,
+		name: name,
+		path: filepath.Join(m.config.Material.MaterialPath, pathName),
 	}
-	return material
+	actualMaterial, _ := m.crypto.LoadOrStore(pathName, material)
+	return actualMaterial.(*CryptoMaterial)
 }
 
-func (m *BenchMaterial) User(name string) *CryptoMaterial {
+func (m *BenchMaterial) getUserCrypto(name string) *CryptoMaterial {
 	return m.getCrypto(name, prefixUser+name)
 }
 
-func (m *BenchMaterial) Server(name string) *ServerMaterial {
-	if m.servers == nil {
-		m.servers = make(map[string]*ServerMaterial)
-	}
-
-	server, ok := m.servers[name]
-	if !ok {
-		pathName := prefixServer + name
-		server = &ServerMaterial{
-			lg:           m.lg,
-			name:         name,
-			materialPath: filepath.Join(m.config.MaterialPath, pathName),
-			dataPath:     filepath.Join(m.config.DataPath, pathName),
-			server:       m.config.Cluster[name],
-			crypto:       m.getCrypto(name, pathName),
-			rootCrypto:   m.User(Root),
-		}
-		m.servers[name] = server
-	}
-	return server
+func (m *BenchMaterial) RootUser() *CryptoMaterial {
+	return m.getUserCrypto(Root)
 }
 
-func (m *BenchMaterial) GenerateNUsers(n int) {
-	users := make([]string, n)
-	for i := 0; i < n; i++ {
-		users[i] = userIndex(i)
-	}
-	m.Generate(users)
+func (m *BenchMaterial) AdminUser() *CryptoMaterial {
+	return m.getUserCrypto(Admin)
 }
 
-func (m *BenchMaterial) Generate(users []string) {
-	m.Check(os.RemoveAll(m.config.MaterialPath))
-	m.Check(os.MkdirAll(m.config.MaterialPath, perm))
+func (m *BenchMaterial) User(i uint64) *CryptoMaterial {
+	return m.getUserCrypto(userIndex(i))
+}
 
-	root := m.User(Root)
-	root.generateRoot(userHost)
+func (m *BenchMaterial) Node(i uint64) *NodeMaterial {
+	name := nodeIndex(i)
+	server, ok := m.servers.Load(name)
+	if ok {
+		return server.(*NodeMaterial)
+	}
+	pathName := prefixNode + name
+	server = &NodeMaterial{
+		lg:             m.lg,
+		materialPath:   filepath.Join(m.config.Material.MaterialPath, pathName),
+		dataPath:       filepath.Join(m.config.Material.DataPath, pathName),
+		Address:        m.config.Machines[m.config.Cluster.Nodes[i]],
+		RaftId:         i + 1,
+		NodePort:       m.config.Cluster.NodeBasePort + types.Port(i),
+		PeerPort:       m.config.Cluster.PeerBasePort + types.Port(i),
+		PrometheusPort: m.config.Cluster.PrometheusBasePort + types.Port(i),
+		Crypto:         m.getCrypto(name, pathName),
+		material:       m,
+	}
+	actualServer, _ := m.crypto.LoadOrStore(name, server)
+	return actualServer.(*NodeMaterial)
+}
 
-	for _, name := range append(users, Admin) {
-		m.User(name).generate(root, userHost)
+func (m *BenchMaterial) Worker(i uint64) *WorkerMaterial {
+	return &WorkerMaterial{
+		lg:             m.lg,
+		Rank:           i,
+		Address:        m.config.Machines[m.config.Workload.Workers[i]],
+		PrometheusPort: m.config.Workload.PrometheusBasePort + types.Port(i),
+	}
+}
+
+func (m *BenchMaterial) Prometheus() *PrometheusMaterial {
+	return &PrometheusMaterial{
+		lg:              m.lg,
+		material:        m,
+		path:            filepath.Join(m.config.Material.MaterialPath, "prometheus.yaml"),
+		defaultConfPath: m.config.Material.DefaultPrometheusConfPath,
+	}
+}
+
+func (m *BenchMaterial) Generate() {
+	m.Check(os.RemoveAll(m.config.Material.MaterialPath))
+	m.Check(os.MkdirAll(m.config.Material.MaterialPath, perm))
+
+	root := m.RootUser()
+	root.generateRoot()
+	m.AdminUser().generate(root, userHost)
+
+	var wg sync.WaitGroup
+	for _, user := range m.AllUsers() {
+		wg.Add(1)
+		go func(user *CryptoMaterial) {
+			user.generate(root, userHost)
+			wg.Done()
+		}(user)
 	}
 
-	m.GenerateBootstrapFile()
-	for name := range m.config.Cluster {
-		m.Server(name).generate()
+	for _, node := range m.AllNodes() {
+		wg.Add(1)
+		go func(node *NodeMaterial) {
+			node.generate()
+			wg.Done()
+		}(node)
 	}
+
+	wg.Wait()
+
+	m.Prometheus().Generate()
 }
 
 func (m *BenchMaterial) List() []string {
-	files, err := os.ReadDir(m.config.MaterialPath)
+	files, err := os.ReadDir(m.config.Material.MaterialPath)
 	m.Check(err)
 	var material []string
 	for _, f := range files {
@@ -128,27 +160,28 @@ func (m *BenchMaterial) List() []string {
 	return material
 }
 
-func (m *BenchMaterial) ListUserNames() []string {
-	var users []string
-	for _, material := range m.List() {
-		if !strings.HasPrefix(material, prefixUser) {
-			continue
-		}
-		userName := strings.TrimPrefix(material, prefixUser)
-		if userName == Root || userName == Admin {
-			continue
-		}
-		users = append(users, userName)
+func (m *BenchMaterial) AllUsers() []*CryptoMaterial {
+	var users []*CryptoMaterial
+	for i := uint64(0); i < m.config.Workload.UserCount; i++ {
+		users = append(users, m.User(i))
 	}
 	return users
 }
 
-func (m *BenchMaterial) ListUsers() []*CryptoMaterial {
-	var users []*CryptoMaterial
-	for _, userName := range m.ListUserNames() {
-		users = append(users, m.User(userName))
+func (m *BenchMaterial) AllNodes() []*NodeMaterial {
+	var servers []*NodeMaterial
+	for i := range m.config.Cluster.Nodes {
+		servers = append(servers, m.Node(uint64(i)))
 	}
-	return users
+	return servers
+}
+
+func (m *BenchMaterial) AllWorkers() []*WorkerMaterial {
+	var workers []*WorkerMaterial
+	for i := range m.config.Workload.Workers {
+		workers = append(workers, m.Worker(uint64(i)))
+	}
+	return workers
 }
 
 func (m *BenchMaterial) ServerTLS() sdkconfig.ServerTLSConfig {
@@ -159,56 +192,5 @@ func (m *BenchMaterial) ServerTLS() sdkconfig.ServerTLSConfig {
 		//	RootCACertsPath:         []string{m.User(Root).CertPath()},
 		//	IntermediateCACertsPath: nil,
 		//},
-	}
-}
-
-func (m *BenchMaterial) GenerateBootstrapFile() {
-	sharedConfig := &config.SharedConfiguration{
-		Nodes: nil,
-		Consensus: &config.ConsensusConf{
-			Algorithm: "raft",
-			Members:   nil,
-			Observers: nil,
-			RaftConfig: &config.RaftConf{
-				TickInterval:         "100ms",
-				ElectionTicks:        50,
-				HeartbeatTicks:       5,
-				MaxInflightBlocks:    50,
-				SnapshotIntervalSize: 64 * 1024 * 1024,
-			},
-		},
-		CAConfig: config.CAConfiguration{
-			RootCACertsPath:         []string{m.User(Root).CertPath()},
-			IntermediateCACertsPath: nil,
-		},
-		Admin: config.AdminConf{
-			ID:              Admin,
-			CertificatePath: m.User(Admin).CertPath(),
-		},
-	}
-
-	for serverID, s := range m.config.Cluster {
-		sharedConfig.Consensus.Members = append(
-			sharedConfig.Consensus.Members,
-			&config.PeerConf{
-				NodeId:   serverID,
-				RaftId:   s.RaftId,
-				PeerHost: s.Address,
-				PeerPort: s.PeerPort,
-			},
-		)
-	}
-
-	for serverID, s := range m.config.Cluster {
-		sharedConfig.Nodes = append(sharedConfig.Nodes, &config.NodeConf{
-			NodeID:          serverID,
-			Host:            s.Address,
-			Port:            s.NodePort,
-			CertificatePath: m.Server(serverID).crypto.CertPath(),
-		})
-	}
-
-	for serverID := range m.config.Cluster {
-		m.Check(setup.WriteSharedConfig(sharedConfig, m.Server(serverID).BootstrapConfPath()))
 	}
 }

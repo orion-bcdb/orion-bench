@@ -1,0 +1,9 @@
+consensus:
+  algorithm: raft
+  observers: []
+  raftconfig:
+    tickinterval: 100ms
+    electionticks: 50
+    heartbeatticks: 5
+    maxinflightblocks: 50
+    snapshotintervalsize: 67108864

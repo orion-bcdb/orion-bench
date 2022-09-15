@@ -1,18 +1,37 @@
 # Example benchmark configuration
-log-level: debug
-session:
-  tx-timeout: 60
-  query-timeout: 60
-material-path: /tmp/orion-benchmark-material
-data-path: /tmp/orion-benchmark-data
-workload:
-  name: independent-increment
-  user-count: 5
-  # Each worker might run many parallel workloads
-  worker-count: 1
+log-level: info
+material:
+  material-path: /tmp/orion-benchmark-material
+  data-path: /tmp/orion-benchmark-data
+  default-local-conf-path: ./examples/local-config.yaml
+  default-shared-conf-path: ./examples/shared-config.yaml
+  default-prometheus-conf-path: ./examples/prometheus.yaml
+machines:
+  local: 127.0.0.1
 cluster:
-  main:
-    address: 127.0.0.1
-    raft-id: 1
-    node-port: 6000
-    peer-port: 7000
+  # Each node will serve at port+rank
+  node-base-port: 6000
+  peer-base-port: 7000
+  prometheus-base-port: 2000
+  nodes:
+    - local
+workload:
+  name: independent-blind-writes
+  user-count: 5_000
+  session:
+    tx-timeout: 10
+    query-timeout: 10
+  duration: 60s
+  log-report-interval: 1s
+  # Each worker will serve at port+rank
+  prometheus-base-port: 3000
+  # Each worker might run many parallel workloads
+  workers:
+    - local
+    - local
+
+# Example prometheus CMD
+#  prometheus \
+#     --config.file=/tmp/orion-benchmark-material/prometheus.yaml \
+#     --storage.tsdb.path="/tmp/orion-benchmark-data/prometheus/" \
+#     --web.listen-address=0.0.0.0:9099

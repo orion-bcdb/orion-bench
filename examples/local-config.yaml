@@ -1,0 +1,21 @@
+server:
+  database:
+    name: leveldb
+  provenance:
+    disabled: true
+  queuelength:
+    transaction: 10_000
+    reorderedtransactionbatch: 10_000
+    block: 10_000
+  queryprocessing:
+    responsesizelimitinbytes: 1024
+  loglevel: info
+  tls:
+    enabled: false
+blockcreation:
+  maxblocksize: 1_000_000_000
+  maxtransactioncountperblock: 100_000
+  blocktimeout: 1s
+replication:
+  tls:
+    enabled: false
