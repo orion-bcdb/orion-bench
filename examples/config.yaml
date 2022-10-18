@@ -7,14 +7,15 @@ material:
   default-shared-conf-path: ./examples/shared-config.yaml
   default-prometheus-conf-path: ./examples/prometheus.yaml
 machines:
-  local: 127.0.0.1
+  local1: 127.0.0.1
+  local2: 127.0.0.1
 cluster:
   # Each node will serve at port+rank
   node-base-port: 6000
   peer-base-port: 7000
   prometheus-base-port: 2000
   nodes:
-    - local
+    - local1
 workload:
   name: independent-blind-writes
   user-count: 5_000
@@ -27,11 +28,7 @@ workload:
   prometheus-base-port: 3000
   # Each worker might run many parallel workloads
   workers:
-    - local
-    - local
-
-# Example prometheus CMD
-#  prometheus \
-#     --config.file=/tmp/orion-benchmark-material/prometheus.yaml \
-#     --storage.tsdb.path="/tmp/orion-benchmark-data/prometheus/" \
-#     --web.listen-address=0.0.0.0:9099
+    - local1
+    - local2
+prometheus:
+  listen-address: 0.0.0.0:9099

@@ -1,3 +1,5 @@
+// Author: Liran Funaro <liran.funaro@ibm.com>
+
 package config
 
 import (
@@ -67,10 +69,10 @@ func (c *OrionBenchConfig) Workload() workload.Runner {
 		return c.workload
 	}
 
-	c.workload = workload.New(c.Cmd.Rank, &c.Config, c.Material(), c.lg)
+	c.workload = workload.New(c.Cmd.Rank.Number(), &c.Config, c.Material(), c.lg)
 	return c.workload
 }
 
 func (c *OrionBenchConfig) Node() *material.NodeMaterial {
-	return c.Material().Node(c.Cmd.Rank)
+	return c.Material().Node(c.Cmd.Rank.Number())
 }

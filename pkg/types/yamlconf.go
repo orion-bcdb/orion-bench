@@ -1,3 +1,5 @@
+// Author: Liran Funaro <liran.funaro@ibm.com>
+
 package types
 
 import (
@@ -44,10 +46,15 @@ type Server struct {
 	PeerPort uint32 `yaml:"peer-port"`
 }
 
+type PrometheusConf struct {
+	ListenAddress string `yaml:"listen-address"`
+}
+
 type BenchmarkConf struct {
-	LogLevel string            `yaml:"log-level"`
-	Material MaterialConf      `yaml:"material"`
-	Machines map[string]string `yaml:"machines"`
-	Cluster  ClusterConf       `yaml:"cluster"`
-	Workload WorkloadConf      `yaml:"workload"`
+	LogLevel   string            `yaml:"log-level"`
+	Material   MaterialConf      `yaml:"material"`
+	Machines   map[string]string `yaml:"machines"`
+	Cluster    ClusterConf       `yaml:"cluster"`
+	Workload   WorkloadConf      `yaml:"workload"`
+	Prometheus PrometheusConf    `yaml:"prometheus"`
 }

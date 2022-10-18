@@ -1,3 +1,5 @@
+// Author: Liran Funaro <liran.funaro@ibm.com>
+
 package independent_blind_writes
 
 import (

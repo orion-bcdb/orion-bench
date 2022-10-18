@@ -1,13 +1,17 @@
+// Author: Liran Funaro <liran.funaro@ibm.com>
+
 package material
 
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
+	"path/filepath"
+	"syscall"
 
 	"orion-bench/pkg/utils"
 
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
-	"gopkg.in/yaml.v3"
 )
 
 type PrometheusMaterial struct {
@@ -25,15 +29,15 @@ func (p *PrometheusMaterial) Check(err error) {
 }
 
 func (p *PrometheusMaterial) readConfigFile(configFilePath string) *utils.Map {
-	var conf utils.AnyMap
 	b, err := ioutil.ReadFile(configFilePath)
 	p.Check(err)
-	p.Check(yaml.Unmarshal(b, &conf))
-	return utils.AsMap(conf)
+	conf := utils.Unmarshal(b).Map()
+	p.Check(conf.GetError())
+	return conf
 }
 
 func (p *PrometheusMaterial) writeConfigFile(configFilePath string) {
-	b, err := yaml.Marshal(p.Conf().Any())
+	b, err := p.Conf().Marshal()
 	p.Check(err)
 	p.Check(ioutil.WriteFile(configFilePath, b, perm))
 }
@@ -54,7 +58,7 @@ func (p *PrometheusMaterial) MainScrapeConfig() *utils.Map {
 	}
 
 	mainConf := utils.AsMap(utils.AnyMap{"job_name": "benchmark"})
-	p.Conf().Set("scrape_configs", scrapeConfigs.Append(mainConf))
+	p.Check(p.Conf().Set("scrape_configs", scrapeConfigs.Append(mainConf)).GetError())
 	return mainConf
 }
 
@@ -63,25 +67,25 @@ func (p *PrometheusMaterial) GetStaticConfig(group string) *utils.Map {
 	staticConfigs := mainConf.SetDefaultList("static_configs")
 	for i := 0; i < staticConfigs.Len(); i++ {
 		s := staticConfigs.Get(i).Map()
-		if g, ok := s.Get("labels").Map().Get("group").String(); ok && g == group {
+		if g, err := s.Get("labels").Map().Get("group").String(); err != nil && g == group {
 			return s
 		}
 	}
 
 	// group was not found
 	staticConf := utils.AsMap(utils.AnyMap{"labels": utils.AnyMap{"group": group}})
-	mainConf.Set("static_configs", staticConfigs.Append(staticConf))
+	p.Check(mainConf.Set("static_configs", staticConfigs.Append(staticConf)).GetError())
 	return staticConf
 }
 
 func (p *PrometheusMaterial) AddTarget(group string, target string) {
 	staticConf := p.GetStaticConfig(group)
 	curTargets := staticConf.SetDefaultList("targets")
-	staticConf.Set("targets", curTargets.Append(target))
+	p.Check(staticConf.Set("targets", curTargets.Append(target)).GetError())
 }
 
 func (p *PrometheusMaterial) PrintConf() {
-	b, err := yaml.Marshal(p.Conf().Any())
+	b, err := p.Conf().Marshal()
 	p.Check(err)
 	fmt.Println(string(b))
 }
@@ -96,4 +100,18 @@ func (p *PrometheusMaterial) Generate() {
 	}
 
 	p.writeConfigFile(p.path)
+}
+
+func (p *PrometheusMaterial) Run() {
+	p.Check(syscall.Exec(
+		"/bin/prometheus",
+		[]string{
+			fmt.Sprintf("--config.file=\"%s\"", p.path),
+			fmt.Sprintf("--storage.tsdb.path=\"%s\"",
+				filepath.Join(p.material.config.Material.DataPath, "prometheus"),
+			),
+			fmt.Sprintf("--web.listen-address=%s", p.material.config.Prometheus.ListenAddress),
+		},
+		os.Environ(),
+	))
 }

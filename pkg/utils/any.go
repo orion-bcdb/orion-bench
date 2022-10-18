@@ -1,116 +1,139 @@
+// Author: Liran Funaro <liran.funaro@ibm.com>
+
 package utils
+
+import (
+	"reflect"
+
+	"github.com/pkg/errors"
+	"gopkg.in/yaml.v3"
+)
 
 type AnyObj = interface{}
 type AnyMap = map[string]AnyObj
 type AnyList = []AnyObj
 
 type Any interface {
+	GetError() error
 	OK() bool
-	Any() AnyObj
+	Obj() (AnyObj, error)
 	Map() *Map
 	List() *List
-	String() (string, bool)
+	String() (string, error)
+	Marshal() ([]byte, error)
 }
 
 type GenericAny struct {
-	o  AnyObj
-	ok bool
+	o   AnyObj
+	err error
 }
 
 type Map struct {
 	GenericAny
 	m AnyMap
 }
+
 type List struct {
 	GenericAny
 	l AnyList
 }
 
-var (
-	NilAny  = &GenericAny{o: nil, ok: false}
-	NilMap  = &Map{GenericAny: *NilAny, m: nil}
-	NilList = &List{GenericAny: *NilAny, l: nil}
-)
+func WrapError(err error) Any {
+	return &GenericAny{o: nil, err: err}
+}
 
-func AsAny(value AnyObj) Any {
-	switch v := value.(type) {
-	case Any:
-		return v
-	default:
-		return &GenericAny{o: value, ok: true}
+func WrapAny(value AnyObj) Any {
+	vAny, ok := value.(Any)
+	if ok {
+		return vAny
+	} else {
+		return &GenericAny{o: value}
 	}
 }
 
 func AsMap(value AnyMap) *Map {
-	return &Map{GenericAny: GenericAny{o: value, ok: true}, m: value}
+	return &Map{GenericAny: GenericAny{o: value}, m: value}
 }
 
 func AsList(value AnyList) *List {
-	return &List{GenericAny: GenericAny{o: value, ok: true}, l: value}
+	return &List{GenericAny: GenericAny{o: value}, l: value}
 }
 
 func (a *GenericAny) OK() bool {
-	return a != nil && a.o != nil && a.ok
+	return a != nil && a.o != nil && a.err == nil
 }
 
-func (a *GenericAny) Any() AnyObj {
-	if a.OK() {
-		return a.o
+func (a *GenericAny) GetError() error {
+	if a == nil {
+		return errors.New("nil pointer")
+	} else if a.err != nil {
+		return a.err
+	} else if a.o == nil {
+		return errors.New("nil object")
 	}
 	return nil
 }
 
+func (a *GenericAny) Obj() (AnyObj, error) {
+	return a.o, a.GetError()
+}
+
 func (a *GenericAny) Map() *Map {
-	if !a.OK() {
-		return NilMap
+	wasOK := a.OK()
+	m, ok := a.o.(AnyMap)
+	ret := &Map{GenericAny: *a, m: m}
+	if !wasOK {
+		return ret
+	} else if !ok {
+		ret.err = errors.Errorf("cannot interpret '%s' as map", reflect.TypeOf(a.o).String())
 	}
-	if o, ok := a.o.(AnyMap); ok {
-		return &Map{GenericAny: *a, m: o}
-	}
-	return NilMap
+	return ret
 }
 
 func (a *GenericAny) List() *List {
-	if !a.OK() {
-		return NilList
+	wasOK := a.OK()
+	l, ok := a.o.(AnyList)
+	ret := &List{GenericAny: *a, l: l}
+	if !wasOK {
+		return ret
+	} else if !ok {
+		ret.err = errors.Errorf("cannot interpret '%s' as list", reflect.TypeOf(a.o).String())
 	}
-	if o, ok := a.o.(AnyList); ok {
-		return &List{GenericAny: *a, l: o}
-	}
-	return NilList
+	return ret
 }
 
-func (a *GenericAny) String() (string, bool) {
-	if !a.OK() {
-		return "", false
+func (a *GenericAny) String() (string, error) {
+	if err := a.GetError(); err != nil {
+		return "", err
 	}
 	if o, ok := a.o.(string); ok {
-		return o, true
+		return o, nil
 	}
-	return "", false
+	return "", errors.Errorf("cannot interpret '%s' as string", reflect.TypeOf(a.o).String())
 }
 
 func (m *Map) OK() bool {
 	return m.GenericAny.OK() && m.m != nil
 }
 
-func (m *Map) Get(key string) *GenericAny {
-	if !m.OK() {
-		return NilAny
+func (m *Map) Get(key string) Any {
+	if err := m.GetError(); err != nil {
+		return WrapError(errors.Wrapf(err, "can't fetch key '%s'", key))
 	}
 	if o, ok := m.m[key]; ok {
-		return &GenericAny{o: o, ok: true}
+		return &GenericAny{o: o}
 	}
-	return NilAny
+	return WrapError(errors.Errorf("no such key '%s'", key))
 }
 
 func (m *Map) Set(key string, value AnyObj) Any {
-	if !m.OK() {
-		return NilAny
+	if err := m.GetError(); err != nil {
+		return WrapError(errors.Wrapf(err, "can't set key '%s'", key))
 	}
-	v := AsAny(value)
-	if v.OK() {
-		m.m[key] = v.Any()
+	v := WrapAny(value)
+	o, err := v.Obj()
+	if err != nil {
+		m.m[key] = o
 	}
 	return v
 }
@@ -140,11 +163,14 @@ func (l *List) Len() int {
 	return len(l.l)
 }
 
-func (l *List) Get(i int) *GenericAny {
-	if i < 0 || i >= l.Len() {
-		return NilAny
+func (l *List) Get(i int) Any {
+	if err := l.GetError(); err != nil {
+		return WrapError(errors.Wrapf(err, "can't get index '%d'", i))
 	}
-	return &GenericAny{o: l.l[i], ok: true}
+	if i < 0 || i >= l.Len() {
+		return WrapError(errors.Errorf("index '%d' out of bound", i))
+	}
+	return &GenericAny{o: l.l[i]}
 }
 
 func (l *List) Append(value ...AnyObj) *List {
@@ -152,11 +178,24 @@ func (l *List) Append(value ...AnyObj) *List {
 		return l
 	}
 	for _, v := range value {
-		anyValue := AsAny(v)
-		if anyValue.OK() {
-			l.l = append(l.l, anyValue.Any())
+		if o, err := WrapAny(v).Obj(); err != nil {
+			l.l = append(l.l, o)
 			l.o = l.l
 		}
 	}
 	return l
+}
+
+func Unmarshal(in []byte) Any {
+	conf := &GenericAny{}
+	conf.err = yaml.Unmarshal(in, &conf.o)
+	return conf
+}
+
+func (a *GenericAny) Marshal() ([]byte, error) {
+	o, err := a.Obj()
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(o)
 }

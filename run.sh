@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# Author: Liran Funaro <liran.funaro@ibm.com>
+
 orion_log_dir="/data/orion-benchmark-data"
 orion_log="${orion_log_dir}/orion.log"
 
