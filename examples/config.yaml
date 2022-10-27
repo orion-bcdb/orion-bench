@@ -1,21 +1,19 @@
 # Example benchmark configuration
 log-level: info
-material:
-  material-path: /tmp/orion-benchmark-material
-  data-path: /tmp/orion-benchmark-data
-  default-local-conf-path: ./examples/local-config.yaml
-  default-shared-conf-path: ./examples/shared-config.yaml
-  default-prometheus-conf-path: ./examples/prometheus.yaml
-machines:
-  local1: 127.0.0.1
-  local2: 127.0.0.1
+path:
+  material: /tmp/orion-benchmark/material
+  data: /tmp/orion-benchmark/data
+  metrics: /tmp/orion-benchmark/metrics
+  default-local-conf: local-config.yaml
+  default-shared-conf: shared-config.yaml
+  default-prometheus-conf: prometheus.yaml
 cluster:
   # Each node will serve at port+rank
   node-base-port: 6000
   peer-base-port: 7000
   prometheus-base-port: 2000
   nodes:
-    - local1
+    - 127.0.0.1
 workload:
   name: independent-blind-writes
   user-count: 5_000
@@ -28,7 +26,7 @@ workload:
   prometheus-base-port: 3000
   # Each worker might run many parallel workloads
   workers:
-    - local1
-    - local2
+    - 127.0.0.1
+    - 127.0.0.1
 prometheus:
   listen-address: 0.0.0.0:9099

@@ -13,8 +13,9 @@ import (
 func main() {
 	ops := config.NewCmd().Add(
 		"clear", "clear all the material and data", func(c *config.OrionBenchConfig) {
-			c.Check(os.RemoveAll(c.Config.Material.MaterialPath))
-			c.Check(os.RemoveAll(c.Config.Material.DataPath))
+			c.Check(os.RemoveAll(c.Config.Path.Material))
+			c.Check(os.RemoveAll(c.Config.Path.Data))
+			c.Check(os.RemoveAll(c.Config.Path.Metrics))
 		}).Add(
 		"material", "generate all crypto material and configurations", func(c *config.OrionBenchConfig) {
 			c.Material().Generate()

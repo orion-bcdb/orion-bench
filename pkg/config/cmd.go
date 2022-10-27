@@ -105,6 +105,7 @@ func (r *Rank) MarshalYAML() (interface{}, error) {
 }
 
 type CommandLineArgs struct {
+	Cwd        string         `yaml:"cwd"`
 	ConfigPath string         `yaml:"config-path"`
 	Op         *CmdOperations `yaml:"op,flow"`
 	Rank       *Rank          `yaml:"rank"`
@@ -112,6 +113,8 @@ type CommandLineArgs struct {
 
 func ParseCommandLine(ops *CmdOperations) *CommandLineArgs {
 	args := &CommandLineArgs{Op: ops, Rank: &Rank{MainRank}}
+	flag.StringVar(&args.Cwd, "cwd", "",
+		"benchmark configuration working directory")
 	flag.StringVar(&args.ConfigPath, "config", "",
 		"benchmark configuration YAML file path")
 	for _, op := range ops.OpList {

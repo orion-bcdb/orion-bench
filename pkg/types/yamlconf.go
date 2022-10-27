@@ -8,12 +8,13 @@ import (
 
 type Port uint32
 
-type MaterialConf struct {
-	MaterialPath              string `yaml:"material-path"`
-	DataPath                  string `yaml:"data-path"`
-	DefaultLocalConfPath      string `yaml:"default-local-conf-path"`
-	DefaultSharedConfPath     string `yaml:"default-shared-conf-path"`
-	DefaultPrometheusConfPath string `yaml:"default-prometheus-conf-path"`
+type PathConf struct {
+	Material              string `yaml:"material"`
+	Data                  string `yaml:"data"`
+	Metrics               string `yaml:"metrics"`
+	DefaultLocalConf      string `yaml:"default-local-conf"`
+	DefaultSharedConf     string `yaml:"default-shared-conf"`
+	DefaultPrometheusConf string `yaml:"default-prometheus-conf"`
 }
 
 type ClusterConf struct {
@@ -39,22 +40,14 @@ type SessionConf struct {
 	QueryTimeout int `yaml:"query-timeout"`
 }
 
-type Server struct {
-	Address  string `yaml:"address"`
-	RaftId   uint64 `yaml:"raft-id"`
-	NodePort uint32 `yaml:"node-port"`
-	PeerPort uint32 `yaml:"peer-port"`
-}
-
 type PrometheusConf struct {
 	ListenAddress string `yaml:"listen-address"`
 }
 
 type BenchmarkConf struct {
-	LogLevel   string            `yaml:"log-level"`
-	Material   MaterialConf      `yaml:"material"`
-	Machines   map[string]string `yaml:"machines"`
-	Cluster    ClusterConf       `yaml:"cluster"`
-	Workload   WorkloadConf      `yaml:"workload"`
-	Prometheus PrometheusConf    `yaml:"prometheus"`
+	LogLevel   string         `yaml:"log-level"`
+	Path       PathConf       `yaml:"path"`
+	Cluster    ClusterConf    `yaml:"cluster"`
+	Workload   WorkloadConf   `yaml:"workload"`
+	Prometheus PrometheusConf `yaml:"prometheus"`
 }

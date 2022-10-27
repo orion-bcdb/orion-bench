@@ -52,7 +52,7 @@ func (m *BenchMaterial) getCrypto(name string, pathName string) *CryptoMaterial 
 	material = &CryptoMaterial{
 		lg:   m.lg,
 		name: name,
-		path: filepath.Join(m.config.Material.MaterialPath, pathName),
+		path: filepath.Join(m.config.Path.Material, pathName),
 	}
 	actualMaterial, _ := m.crypto.LoadOrStore(pathName, material)
 	return actualMaterial.(*CryptoMaterial)
@@ -83,9 +83,9 @@ func (m *BenchMaterial) Node(i uint64) *NodeMaterial {
 	pathName := prefixNode + name
 	server = &NodeMaterial{
 		lg:             m.lg,
-		materialPath:   filepath.Join(m.config.Material.MaterialPath, pathName),
-		dataPath:       filepath.Join(m.config.Material.DataPath, pathName),
-		Address:        m.config.Machines[m.config.Cluster.Nodes[i]],
+		materialPath:   filepath.Join(m.config.Path.Material, pathName),
+		dataPath:       filepath.Join(m.config.Path.Data, pathName),
+		Address:        m.config.Cluster.Nodes[i],
 		RaftId:         i + 1,
 		NodePort:       m.config.Cluster.NodeBasePort + types.Port(i),
 		PeerPort:       m.config.Cluster.PeerBasePort + types.Port(i),
@@ -101,7 +101,7 @@ func (m *BenchMaterial) Worker(i uint64) *WorkerMaterial {
 	return &WorkerMaterial{
 		lg:             m.lg,
 		Rank:           i,
-		Address:        m.config.Machines[m.config.Workload.Workers[i]],
+		Address:        m.config.Workload.Workers[i],
 		PrometheusPort: m.config.Workload.PrometheusBasePort + types.Port(i),
 	}
 }
@@ -110,14 +110,14 @@ func (m *BenchMaterial) Prometheus() *PrometheusMaterial {
 	return &PrometheusMaterial{
 		lg:              m.lg,
 		material:        m,
-		path:            filepath.Join(m.config.Material.MaterialPath, "prometheus.yaml"),
-		defaultConfPath: m.config.Material.DefaultPrometheusConfPath,
+		path:            filepath.Join(m.config.Path.Material, "prometheus.yaml"),
+		defaultConfPath: m.config.Path.DefaultPrometheusConf,
 	}
 }
 
 func (m *BenchMaterial) Generate() {
-	m.Check(os.RemoveAll(m.config.Material.MaterialPath))
-	m.Check(os.MkdirAll(m.config.Material.MaterialPath, perm))
+	m.Check(os.RemoveAll(m.config.Path.Material))
+	m.Check(os.MkdirAll(m.config.Path.Material, perm))
 
 	root := m.RootUser()
 	root.generateRoot()
@@ -146,7 +146,7 @@ func (m *BenchMaterial) Generate() {
 }
 
 func (m *BenchMaterial) List() []string {
-	files, err := os.ReadDir(m.config.Material.MaterialPath)
+	files, err := os.ReadDir(m.config.Path.Material)
 	m.Check(err)
 	var material []string
 	for _, f := range files {

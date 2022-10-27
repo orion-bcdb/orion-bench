@@ -3,6 +3,7 @@
 package utils
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/pkg/errors"
@@ -21,6 +22,7 @@ type Any interface {
 	List() *List
 	String() (string, error)
 	Marshal() ([]byte, error)
+	Print() error
 }
 
 type GenericAny struct {
@@ -55,6 +57,7 @@ func AsMap(value AnyMap) *Map {
 	return &Map{GenericAny: GenericAny{o: value}, m: value}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func AsList(value AnyList) *List {
 	return &List{GenericAny: GenericAny{o: value}, l: value}
 }
@@ -131,8 +134,7 @@ func (m *Map) Set(key string, value AnyObj) Any {
 		return WrapError(errors.Wrapf(err, "can't set key '%s'", key))
 	}
 	v := WrapAny(value)
-	o, err := v.Obj()
-	if err != nil {
+	if o, err := v.Obj(); err == nil {
 		m.m[key] = o
 	}
 	return v
@@ -178,7 +180,7 @@ func (l *List) Append(value ...AnyObj) *List {
 		return l
 	}
 	for _, v := range value {
-		if o, err := WrapAny(v).Obj(); err != nil {
+		if o, err := WrapAny(v).Obj(); err == nil {
 			l.l = append(l.l, o)
 			l.o = l.l
 		}
@@ -198,4 +200,13 @@ func (a *GenericAny) Marshal() ([]byte, error) {
 		return nil, err
 	}
 	return yaml.Marshal(o)
+}
+
+func (a *GenericAny) Print() error {
+	b, err := a.Marshal()
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
 }

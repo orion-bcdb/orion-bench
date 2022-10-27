@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"orion-bench/pkg/utils"
@@ -67,7 +68,8 @@ func (p *PrometheusMaterial) GetStaticConfig(group string) *utils.Map {
 	staticConfigs := mainConf.SetDefaultList("static_configs")
 	for i := 0; i < staticConfigs.Len(); i++ {
 		s := staticConfigs.Get(i).Map()
-		if g, err := s.Get("labels").Map().Get("group").String(); err != nil && g == group {
+		g, err := s.Get("labels").Map().Get("group").String()
+		if err == nil && strings.EqualFold(strings.TrimSpace(g), group) {
 			return s
 		}
 	}
@@ -80,8 +82,10 @@ func (p *PrometheusMaterial) GetStaticConfig(group string) *utils.Map {
 
 func (p *PrometheusMaterial) AddTarget(group string, target string) {
 	staticConf := p.GetStaticConfig(group)
-	curTargets := staticConf.SetDefaultList("targets")
-	p.Check(staticConf.Set("targets", curTargets.Append(target)).GetError())
+	curTargets := staticConf.Get("targets").List()
+	curTargets = curTargets.Append(target)
+	p.Check(curTargets.GetError())
+	p.Check(staticConf.Set("targets", curTargets).GetError())
 }
 
 func (p *PrometheusMaterial) PrintConf() {
@@ -108,7 +112,7 @@ func (p *PrometheusMaterial) Run() {
 		[]string{
 			fmt.Sprintf("--config.file=\"%s\"", p.path),
 			fmt.Sprintf("--storage.tsdb.path=\"%s\"",
-				filepath.Join(p.material.config.Material.DataPath, "prometheus"),
+				filepath.Join(p.material.config.Path.Metrics, "prometheus"),
 			),
 			fmt.Sprintf("--web.listen-address=%s", p.material.config.Prometheus.ListenAddress),
 		},

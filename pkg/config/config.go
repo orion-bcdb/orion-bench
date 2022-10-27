@@ -26,6 +26,9 @@ type OrionBenchConfig struct {
 }
 
 func ReadConfig(cmd *CommandLineArgs) *OrionBenchConfig {
+	if cmd.Cwd != "" {
+		utils.CheckDefault(os.Chdir(cmd.Cwd))
+	}
 	binConfig, err := os.ReadFile(cmd.ConfigPath)
 	utils.CheckDefault(err)
 

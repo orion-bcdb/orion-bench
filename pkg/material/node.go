@@ -4,6 +4,7 @@ package material
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"orion-bench/pkg/types"
@@ -95,8 +96,8 @@ func (s *NodeMaterial) readConfigFile(configFilePath string, conf interface{}) {
 func (s *NodeMaterial) DefaultConfiguration() *config.Configurations {
 	if s.defaultConf == nil {
 		s.defaultConf = &config.Configurations{}
-		s.readConfigFile(s.material.config.Material.DefaultLocalConfPath, &s.defaultConf.LocalConfig)
-		s.readConfigFile(s.material.config.Material.DefaultSharedConfPath, &s.defaultConf.SharedConfig)
+		s.readConfigFile(s.material.config.Path.DefaultLocalConf, &s.defaultConf.LocalConfig)
+		s.readConfigFile(s.material.config.Path.DefaultSharedConf, &s.defaultConf.SharedConfig)
 	}
 	return s.defaultConf
 }
@@ -167,5 +168,6 @@ func (s *NodeMaterial) Run() {
 	s.Check(err)
 	srv, err := server.New(conf)
 	s.Check(err)
+	s.lg.Infof("Node PID %d", os.Getpid())
 	s.Check(srv.Start())
 }
