@@ -91,6 +91,8 @@ func (w *UserWorkload) Serve() {
 }
 
 func (w *UserWorkload) Run() {
+	go w.Serve()
+
 	users := w.WorkerUsers()
 	w.waitInit.Add(len(users))
 	w.waitStart.Add(1)
@@ -103,7 +105,6 @@ func (w *UserWorkload) Run() {
 	w.startTime = time.Now()
 	w.endTime = w.startTime.Add(w.config.Workload.Duration)
 	w.waitEnd.Add(len(users))
-	go w.Serve()
 
 	w.waitStart.Done()
 	for waitTimeout(&w.waitEnd, w.config.Workload.LogReportInterval) && w.endTime.After(time.Now()) {
@@ -133,10 +134,10 @@ func (w *UserWorkload) RunUserWorkload(workerIndex uint64, userIndex uint64) {
 		latency := time.Now().Sub(start).Seconds()
 		if err != nil {
 			w.lg.Errorf("Tx failed: %s", err)
-			successTx.Observe(latency)
+			failedTx.Observe(latency)
 			userWorkload.stats.FailCount++
 		} else {
-			failedTx.Observe(latency)
+			successTx.Observe(latency)
 			userWorkload.stats.SuccessCount++
 		}
 	}

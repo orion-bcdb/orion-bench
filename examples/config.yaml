@@ -20,7 +20,7 @@ workload:
   session:
     tx-timeout: 10
     query-timeout: 10
-  duration: 60s
+  duration: 1m
   log-report-interval: 1s
   # Each worker will serve at port+rank
   prometheus-base-port: 3000
