@@ -3,6 +3,7 @@
 package common
 
 import (
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -21,21 +22,19 @@ type Worker interface {
 }
 
 var (
-	objectives = map[float64]float64{
-		0.99: 0.05,
-		0.9:  0.05,
-		0.5:  0.05,
-		0.1:  0.05,
+	buckets = []float64{
+		math.Inf(-1), 0, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1,
+		1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, math.Inf(1),
 	}
-	successTx = promauto.NewSummary(prometheus.SummaryOpts{
-		Name:       "client_successful_tx_latency_seconds",
-		Help:       "The total number of successful transactions in report interval",
-		Objectives: objectives,
+	successTx = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "client_successful_tx_latency_seconds",
+		Help:    "The total number of successful transactions in report interval",
+		Buckets: buckets,
 	})
-	failedTx = promauto.NewSummary(prometheus.SummaryOpts{
-		Name:       "client_failed_tx_latency_seconds",
-		Help:       "The total number of failed transactions in report interval",
-		Objectives: objectives,
+	failedTx = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "client_failed_tx_latency_seconds",
+		Help:    "The total number of failed transactions in report interval",
+		Buckets: buckets,
 	})
 )
 
