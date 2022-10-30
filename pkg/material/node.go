@@ -145,14 +145,14 @@ func (s *NodeMaterial) GenerateServerConfigFile() {
 		KeyPath:         s.Crypto.KeyPath(),
 	}
 	localConfig.Server.Network = config.NetworkConf{
-		Address: s.Address,
+		Address: "0.0.0.0", //s.Address,
 		Port:    uint32(s.NodePort),
 	}
 	localConfig.Server.Database.LedgerDirectory = s.LedgerPath()
 	localConfig.Replication.WALDir = s.WalPath()
 	localConfig.Replication.SnapDir = s.SnapPath()
 	localConfig.Replication.Network = config.NetworkConf{
-		Address: s.Address,
+		Address: "0.0.0.0", //s.Address,
 		Port:    uint32(s.PeerPort),
 	}
 	localConfig.Bootstrap = config.BootstrapConf{

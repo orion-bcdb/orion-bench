@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"orion-bench/pkg/utils"
 
@@ -107,15 +107,16 @@ func (p *PrometheusMaterial) Generate() {
 }
 
 func (p *PrometheusMaterial) Run() {
-	p.Check(syscall.Exec(
+	p.lg.Infof("Prometheus PID %d", os.Getpid())
+	cmd := exec.Command(
 		"/bin/prometheus",
-		[]string{
-			fmt.Sprintf("--config.file=\"%s\"", p.path),
-			fmt.Sprintf("--storage.tsdb.path=\"%s\"",
-				filepath.Join(p.material.config.Path.Metrics, "prometheus"),
-			),
-			fmt.Sprintf("--web.listen-address=%s", p.material.config.Prometheus.ListenAddress),
-		},
-		os.Environ(),
-	))
+		fmt.Sprintf("--config.file=%s", p.path),
+		fmt.Sprintf("--storage.tsdb.path=%s",
+			filepath.Join(p.material.config.Path.Metrics, "prometheus"),
+		),
+		fmt.Sprintf("--web.listen-address=%s", p.material.config.Prometheus.ListenAddress),
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	p.Check(cmd.Run())
 }
