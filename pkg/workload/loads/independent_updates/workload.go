@@ -51,6 +51,11 @@ func (w *Workload) Work(userWorkload *common.UserWorkloadWorker) error {
 	}
 
 	record.Counter += 1
+	rawRecord, err = json.Marshal(record)
+	if err != nil {
+		return err
+	}
+
 	err = tx.Put(tableName, userWorkload.UserName, rawRecord, &oriontypes.AccessControl{
 		ReadWriteUsers: map[string]bool{
 			userWorkload.UserName: true,

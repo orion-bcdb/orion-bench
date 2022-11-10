@@ -20,7 +20,7 @@ import (
 )
 
 type Workload struct {
-	lg         *logger.SugarLogger
+	Lg         *logger.SugarLogger
 	config     *types.BenchmarkConf
 	material   *material.BenchMaterial
 	workerRank uint64
@@ -32,7 +32,7 @@ type Workload struct {
 
 func New(workerRank uint64, config *types.BenchmarkConf, benchMaterial *material.BenchMaterial, lg *logger.SugarLogger) Workload {
 	return Workload{
-		lg:         lg,
+		Lg:         lg,
 		config:     config,
 		material:   benchMaterial,
 		workerRank: workerRank,
@@ -41,7 +41,7 @@ func New(workerRank uint64, config *types.BenchmarkConf, benchMaterial *material
 }
 
 func (w *Workload) Check(err error) {
-	utils.Check(w.lg, err)
+	utils.Check(w.Lg, err)
 }
 
 func (w *Workload) Replicas() []*sdkconfig.Replica {
@@ -63,7 +63,7 @@ func (w *Workload) DB() bcdb.BCDB {
 	db, err := bcdb.Create(&sdkconfig.ConnectionConfig{
 		ReplicaSet: w.Replicas(),
 		RootCAs:    []string{w.material.RootUser().CertPath()},
-		Logger:     w.lg,
+		Logger:     w.Lg,
 		//TLSConfig:  c.Material().ServerTLS(),
 	})
 	w.Check(err)
@@ -112,20 +112,20 @@ func (w *Workload) CheckCommit(tx bcdb.TxContext) {
 	w.Check(w.Commit(tx))
 }
 
-func (w *Workload) Commit(tx bcdb.TxContext) error {
-	txID, receiptEnv, err := tx.Commit(true)
+func (w *Workload) CommitSync(tx bcdb.TxContext, sync bool) error {
+	txID, receiptEnv, err := tx.Commit(sync)
 	if err == nil {
-		w.lg.Debugf("Commited txID: %s, receipt: %+v", txID, receiptEnv.GetResponse().GetReceipt())
+		w.Lg.Debugf("Commited txID: %s, receipt: %+v", txID, receiptEnv.GetResponse().GetReceipt())
 	}
 	return err
 }
 
+func (w *Workload) Commit(tx bcdb.TxContext) error {
+	return w.CommitSync(tx, true)
+}
+
 func (w *Workload) BlindCommit(tx bcdb.TxContext) error {
-	txID, receiptEnv, err := tx.Commit(false)
-	if err == nil {
-		w.lg.Debugf("Commited txID: %s, receipt: %+v", txID, receiptEnv.GetResponse().GetReceipt())
-	}
-	return err
+	return w.CommitSync(tx, false)
 }
 
 func (w *Workload) CreateTable(tableName string, indices ...string) {
@@ -142,10 +142,6 @@ func (w *Workload) CreateTable(tableName string, indices ...string) {
 }
 
 func (w *Workload) AddUsers(dbName ...string) {
-	tx, err := w.AdminSession().UsersTx()
-	w.Check(err)
-	defer w.CheckAbort(tx)
-
 	commonPrivilege := &oriontypes.Privilege{
 		DbPermission: make(map[string]oriontypes.Privilege_Access),
 		Admin:        false,
@@ -154,6 +150,9 @@ func (w *Workload) AddUsers(dbName ...string) {
 		commonPrivilege.DbPermission[db] = oriontypes.Privilege_ReadWrite
 	}
 
+	tx, err := w.AdminSession().UsersTx()
+	w.Check(err)
+	defer w.CheckAbort(tx)
 	for _, user := range w.material.AllUsers() {
 		w.Check(tx.PutUser(&oriontypes.User{
 			Id:          user.Name(),
@@ -178,6 +177,12 @@ func (w *Workload) GetConfFloat(key string) float64 {
 	intVar, err := strconv.ParseFloat(w.GetConfString(key), 64)
 	w.Check(err)
 	return intVar
+}
+
+func (w *Workload) GetConfBool(key string) bool {
+	boolVar, err := strconv.ParseBool(w.GetConfString(key))
+	w.Check(err)
+	return boolVar
 }
 
 func (w *Workload) WorkerUsers() []uint64 {

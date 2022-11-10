@@ -16,12 +16,14 @@ cluster:
     - 127.0.0.1
 workload:
   name: independent-blind-writes
-  user-count: 10_000
+  user-count: 100
+  parameters:
+    lines-per-user: 1_000
   session:
     tx-timeout: 10
     query-timeout: 10
   duration: 1m
-  log-report-interval: 1s
+  log-report-interval: 10s
   # Each worker will serve at port+rank
   prometheus-base-port: 3000
   # Each worker might run many parallel workloads

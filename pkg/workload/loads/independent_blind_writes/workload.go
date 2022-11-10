@@ -3,13 +3,22 @@
 package independent_blind_writes
 
 import (
+	"fmt"
+
 	"orion-bench/pkg/workload/common"
+
+	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
 )
 
 const tableName = "nothing"
 
 type Workload struct {
 	common.UserWorkload
+}
+
+type State struct {
+	Counter      uint64
+	LinesPerUser uint64
 }
 
 func New(m *common.Workload) interface{} {
@@ -23,18 +32,50 @@ func (w *Workload) Init() {
 	w.AddUsers(tableName)
 }
 
-func (w *Workload) BeforeWork(_ *common.UserWorkloadWorker) {
+func (w *Workload) nextKey(userWorkload *common.UserWorkloadWorker) (string, uint64) {
+	state := userWorkload.WorkloadState.(*State)
+	key := fmt.Sprintf("%s.%d", userWorkload.UserName, state.Counter)
+	state.Counter = (state.Counter + 1) % state.LinesPerUser
+	return key, state.Counter
 }
 
-func (w *Workload) Work(userWorkload *common.UserWorkloadWorker) error {
+func (w *Workload) writeKeyTx(tx bcdb.DataTxContext, key string) error {
+	return tx.Put(tableName, key, nil, nil)
+}
+
+func (w *Workload) writeKey(userWorkload *common.UserWorkloadWorker, key string, sync bool) error {
 	tx, err := userWorkload.Session.DataTx()
 	if err != nil {
 		return err
 	}
 	defer w.CheckAbort(tx)
-	err = tx.Put(tableName, userWorkload.UserName, nil, nil)
-	if err != nil {
+	if err = w.writeKeyTx(tx, key); err != nil {
 		return err
 	}
-	return w.BlindCommit(tx)
+	return w.CommitSync(tx, sync)
+}
+
+func (w *Workload) BeforeWork(userWorkload *common.UserWorkloadWorker) {
+	userWorkload.WorkloadState = &State{
+		Counter:      0,
+		LinesPerUser: uint64(w.GetConfInt("lines-per-user")),
+	}
+
+	//if w.GetConfBool("fill-ahead") {
+	//	tx, err := userWorkload.Session.DataTx()
+	//	w.Check(err)
+	//	for {
+	//		key, nextCount := w.nextKey(userWorkload)
+	//		w.Check(w.writeKeyTx(tx, key))
+	//		if nextCount == 0 {
+	//			break
+	//		}
+	//	}
+	//	w.CheckCommit(tx)
+	//}
+}
+
+func (w *Workload) Work(userWorkload *common.UserWorkloadWorker) error {
+	key, nextCount := w.nextKey(userWorkload)
+	return w.writeKey(userWorkload, key, nextCount == 0)
 }
