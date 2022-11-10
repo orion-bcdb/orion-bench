@@ -14,9 +14,9 @@ server:
   tls:
     enabled: false
 blockcreation:
-  maxblocksize: 1_000_000_000
+  maxblocksize: 100_000_000_000
   maxtransactioncountperblock: 100_000
-  blocktimeout: 0.01s
+  blocktimeout: 1s
 replication:
   tls:
     enabled: false
