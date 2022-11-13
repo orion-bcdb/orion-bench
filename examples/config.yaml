@@ -21,8 +21,8 @@ workload:
   parameters:
     lines-per-user: 100
   session:
-    tx-timeout: 10
-    query-timeout: 10
+    tx-timeout: 120s
+    query-timeout: 120s
   duration: 2m
   log-report-interval: 10s
   # Each worker will serve at port+rank

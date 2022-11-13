@@ -37,8 +37,8 @@ type WorkloadConf struct {
 }
 
 type SessionConf struct {
-	TxTimeout    int `yaml:"tx-timeout"`
-	QueryTimeout int `yaml:"query-timeout"`
+	TxTimeout    time.Duration `yaml:"tx-timeout"`
+	QueryTimeout time.Duration `yaml:"query-timeout"`
 }
 
 type PrometheusConf struct {

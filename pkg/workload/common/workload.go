@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"orion-bench/pkg/material"
@@ -83,8 +82,8 @@ func (w *Workload) Session(userCrypto *material.CryptoMaterial) bcdb.DBSession {
 
 	session, err := w.DB().Session(&sdkconfig.SessionConfig{
 		UserConfig:   userCrypto.Config(),
-		TxTimeout:    time.Duration(w.config.Workload.Session.TxTimeout) * time.Second,
-		QueryTimeout: time.Duration(w.config.Workload.Session.QueryTimeout) * time.Second,
+		TxTimeout:    w.config.Workload.Session.TxTimeout,
+		QueryTimeout: w.config.Workload.Session.QueryTimeout,
 		//ClientTLS:    userCrypto.TLS(),
 	})
 	w.Check(err)
