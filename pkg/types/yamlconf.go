@@ -18,10 +18,11 @@ type PathConf struct {
 }
 
 type ClusterConf struct {
-	NodeBasePort       Port     `yaml:"node-base-port"`
-	PeerBasePort       Port     `yaml:"peer-base-port"`
-	PrometheusBasePort Port     `yaml:"prometheus-base-port"`
-	Nodes              []string `yaml:"nodes"`
+	NodeBasePort               Port          `yaml:"node-base-port"`
+	PeerBasePort               Port          `yaml:"peer-base-port"`
+	PrometheusBasePort         Port          `yaml:"prometheus-base-port"`
+	DataSizeCollectionInterval time.Duration `yaml:"data-size-collection-interval"`
+	Nodes                      []string      `yaml:"nodes"`
 }
 
 type WorkloadConf struct {

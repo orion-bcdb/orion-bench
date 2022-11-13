@@ -12,17 +12,18 @@ cluster:
   node-base-port: 6000
   peer-base-port: 7000
   prometheus-base-port: 2000
+  data-size-collection-interval: 10s
   nodes:
     - 127.0.0.1
 workload:
   name: independent-blind-writes
-  user-count: 100
+  user-count: 512
   parameters:
-    lines-per-user: 1_000
+    lines-per-user: 100
   session:
     tx-timeout: 10
     query-timeout: 10
-  duration: 1m
+  duration: 2m
   log-report-interval: 10s
   # Each worker will serve at port+rank
   prometheus-base-port: 3000

@@ -60,19 +60,6 @@ func (w *Workload) BeforeWork(userWorkload *common.UserWorkloadWorker) {
 		Counter:      0,
 		LinesPerUser: uint64(w.GetConfInt("lines-per-user")),
 	}
-
-	//if w.GetConfBool("fill-ahead") {
-	//	tx, err := userWorkload.Session.DataTx()
-	//	w.Check(err)
-	//	for {
-	//		key, nextCount := w.nextKey(userWorkload)
-	//		w.Check(w.writeKeyTx(tx, key))
-	//		if nextCount == 0 {
-	//			break
-	//		}
-	//	}
-	//	w.CheckCommit(tx)
-	//}
 }
 
 func (w *Workload) Work(userWorkload *common.UserWorkloadWorker) error {

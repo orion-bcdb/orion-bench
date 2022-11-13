@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"orion-bench/pkg/types"
 	"orion-bench/pkg/utils"
@@ -174,4 +175,13 @@ func (s *NodeMaterial) Run() {
 	s.Check(err)
 	s.lg.Infof("Node PID %d", os.Getpid())
 	s.Check(srv.Start())
+
+	go s.DataMonitor()
+}
+
+func (s *NodeMaterial) DataMonitor() {
+	for {
+		utils.DataSize.Set(float64(utils.GetFolderSize(s.dataPath)))
+		time.Sleep(s.material.config.Cluster.DataSizeCollectionInterval)
+	}
 }

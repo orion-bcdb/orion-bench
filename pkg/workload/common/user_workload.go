@@ -3,17 +3,15 @@
 package common
 
 import (
-	"math"
 	"net/http"
 	"regexp"
 	"sync"
 	"time"
 
 	"orion-bench/pkg/material"
+	"orion-bench/pkg/utils"
 
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -22,31 +20,7 @@ type Worker interface {
 	Work(w *UserWorkloadWorker) error
 }
 
-var (
-	buckets = []float64{
-		math.Inf(-1), 0, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1,
-		1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, math.Inf(1),
-	}
-	successTx = promauto.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "client",
-		Name:      "successful_tx_latency_seconds",
-		Help:      "The total number of successful transactions",
-		Buckets:   buckets,
-	})
-	failedTx = promauto.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "client",
-		Name:      "failed_tx_latency_seconds",
-		Help:      "The total number of failed transactions",
-		Buckets:   buckets,
-	})
-	fullQueueTx = promauto.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "client",
-		Name:      "full_queue_tx_latency_seconds",
-		Help:      "The total number of failed transactions due to a full queue",
-		Buckets:   buckets,
-	})
-	fullQueueExp = regexp.MustCompile(`(?i)transaction queue is full`)
-)
+var fullQueueExp = regexp.MustCompile(`(?i)transaction queue is full`)
 
 type UserWorkload struct {
 	Workload
@@ -90,8 +64,6 @@ func (w *UserWorkload) Report() {
 
 	diff := stats.Sub(w.aggregatedStats)
 	diff.Report(w.Lg, "Window")
-	successTx.Observe(float64(diff.SuccessCount))
-	failedTx.Observe(float64(diff.FailCount))
 	w.aggregatedStats = stats
 }
 
@@ -143,14 +115,14 @@ func (w *UserWorkload) RunUserWorkload(workerIndex uint64, userIndex uint64) {
 		err := work(userWorkload)
 		latency := time.Since(start).Seconds()
 		if err == nil {
-			successTx.Observe(latency)
+			utils.SuccessTx.Observe(latency)
 			userWorkload.stats.SuccessCount++
 		} else {
 			if m := fullQueueExp.FindStringSubmatch(err.Error()); m != nil {
-				fullQueueTx.Observe(latency)
+				utils.FullQueueTx.Observe(latency)
 			} else {
 				w.Lg.Errorf("Tx failed: %s", err)
-				failedTx.Observe(latency)
+				utils.FailedTx.Observe(latency)
 			}
 			userWorkload.stats.FailCount++
 		}
