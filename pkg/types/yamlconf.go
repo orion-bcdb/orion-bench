@@ -4,6 +4,8 @@ package types
 
 import (
 	"time"
+
+	"github.com/creasty/defaults"
 )
 
 type Port uint32
@@ -39,6 +41,15 @@ type WorkloadConf struct {
 type SessionConf struct {
 	TxTimeout    time.Duration `yaml:"tx-timeout"`
 	QueryTimeout time.Duration `yaml:"query-timeout"`
+	Backoff      BackoffConf   `yaml:"backoff"`
+}
+
+type BackoffConf struct {
+	InitialInterval     time.Duration `default:"10ms" yaml:"initial-interval"`
+	RandomizationFactor float64       `default:"0.5" yaml:"randomization-factor"`
+	Multiplier          float64       `default:"1.5" yaml:"multiplier"`
+	MaxInterval         time.Duration `default:"1s" yaml:"max-interval"`
+	MaxElapsedTime      time.Duration `default:"60s" yaml:"max-elapsed-time"`
 }
 
 type PrometheusConf struct {
@@ -51,4 +62,18 @@ type BenchmarkConf struct {
 	Cluster    ClusterConf    `yaml:"cluster"`
 	Workload   WorkloadConf   `yaml:"workload"`
 	Prometheus PrometheusConf `yaml:"prometheus"`
+}
+
+func (s *BenchmarkConf) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	err := defaults.Set(s)
+	if err != nil {
+		return err
+	}
+
+	type plain BenchmarkConf
+	if err = unmarshal((*plain)(s)); err != nil {
+		return err
+	}
+
+	return nil
 }

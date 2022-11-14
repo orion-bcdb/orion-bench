@@ -2,8 +2,6 @@ package utils
 
 import (
 	"math"
-	"os"
-	"path/filepath"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -40,14 +38,3 @@ var DataSize = promauto.NewGauge(prometheus.GaugeOpts{
 	Name:      "size_bytes",
 	Help:      "The size of the data folder in bytes",
 })
-
-func GetFolderSize(path string) int64 {
-	var size int64 = 0
-	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size
-}

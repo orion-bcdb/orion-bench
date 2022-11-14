@@ -4,6 +4,8 @@ package utils
 
 import (
 	"log"
+	"os"
+	"path/filepath"
 
 	"go.uber.org/zap"
 )
@@ -20,4 +22,15 @@ func Check(lg FatalLogger, err error) {
 
 func CheckDefault(err error) {
 	Check(log.Default(), err)
+}
+
+func GetFolderSize(path string) int64 {
+	var size int64 = 0
+	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
 }

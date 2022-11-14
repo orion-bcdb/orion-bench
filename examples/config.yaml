@@ -19,10 +19,13 @@ workload:
   name: independent-blind-writes
   user-count: 512
   parameters:
-    lines-per-user: 100
+    lines-per-user: 1000
+    tx-per-sync: 0
   session:
     tx-timeout: 120s
     query-timeout: 120s
+    backoff:
+      initial-interval: 10ms
   duration: 2m
   log-report-interval: 10s
   # Each worker will serve at port+rank

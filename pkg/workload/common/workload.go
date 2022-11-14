@@ -20,7 +20,7 @@ import (
 
 type Workload struct {
 	Lg         *logger.SugarLogger
-	config     *types.BenchmarkConf
+	Config     *types.BenchmarkConf
 	material   *material.BenchMaterial
 	workerRank uint64
 
@@ -32,7 +32,7 @@ type Workload struct {
 func New(workerRank uint64, config *types.BenchmarkConf, benchMaterial *material.BenchMaterial, lg *logger.SugarLogger) Workload {
 	return Workload{
 		Lg:         lg,
-		config:     config,
+		Config:     config,
 		material:   benchMaterial,
 		workerRank: workerRank,
 		sessions:   &sync.Map{},
@@ -82,8 +82,8 @@ func (w *Workload) Session(userCrypto *material.CryptoMaterial) bcdb.DBSession {
 
 	session, err := w.DB().Session(&sdkconfig.SessionConfig{
 		UserConfig:   userCrypto.Config(),
-		TxTimeout:    w.config.Workload.Session.TxTimeout,
-		QueryTimeout: w.config.Workload.Session.QueryTimeout,
+		TxTimeout:    w.Config.Workload.Session.TxTimeout,
+		QueryTimeout: w.Config.Workload.Session.QueryTimeout,
 		//ClientTLS:    userCrypto.TLS(),
 	})
 	w.Check(err)
@@ -163,7 +163,7 @@ func (w *Workload) AddUsers(dbName ...string) {
 }
 
 func (w *Workload) GetConfString(key string) string {
-	return w.config.Workload.Parameters[key]
+	return w.Config.Workload.Parameters[key]
 }
 
 func (w *Workload) GetConfInt(key string) int {
@@ -186,9 +186,9 @@ func (w *Workload) GetConfBool(key string) bool {
 
 func (w *Workload) WorkerUsers() []uint64 {
 	r := w.workerRank
-	c := uint64(len(w.config.Workload.Workers))
+	c := uint64(len(w.Config.Workload.Workers))
 	var users []uint64
-	for i := r; i < w.config.Workload.UserCount; i += c {
+	for i := r; i < w.Config.Workload.UserCount; i += c {
 		users = append(users, i)
 	}
 	return users
