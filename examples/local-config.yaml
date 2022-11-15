@@ -15,8 +15,10 @@ server:
     enabled: false
 blockcreation:
   maxblocksize: 100_000_000_000
-  maxtransactioncountperblock: 10_000_000
-  blocktimeout: 1s
+  maxtransactioncountperblock: 5_000
+  blocktimeout: 10s
 replication:
   tls:
     enabled: false
+experimental:
+  disablecommitphasesigvalidation: false

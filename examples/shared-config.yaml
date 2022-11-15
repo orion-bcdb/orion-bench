@@ -7,3 +7,5 @@ consensus:
     heartbeatticks: 5
     maxinflightblocks: 50
     snapshotintervalsize: 67108864
+ledger:
+  statemerklepatriciatriedisabled: true

@@ -19,7 +19,7 @@ workload:
   name: independent-blind-writes
   user-count: 512
   parameters:
-    lines-per-user: 1000
+    lines-per-user: 500
     tx-per-sync: 0
   session:
     tx-timeout: 120s
