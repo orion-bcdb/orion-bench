@@ -21,13 +21,13 @@ workload:
   parameters:
     lines-per-user: 500
     tx-per-sync: 0
+    with-acl: false
   session:
     tx-timeout: 120s
     query-timeout: 120s
     backoff:
       initial-interval: 10ms
   duration: 2m
-  log-report-interval: 10s
   # Each worker will serve at port+rank
   prometheus-base-port: 3000
   # Each worker might run many parallel workloads

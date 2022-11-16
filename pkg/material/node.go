@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"orion-bench/pkg/types"
@@ -25,6 +26,7 @@ const (
 
 type NodeMaterial struct {
 	lg             *logger.SugarLogger
+	rank           uint64
 	materialPath   string
 	dataPath       string
 	Address        string
@@ -169,17 +171,32 @@ func (s *NodeMaterial) GenerateServerConfigFile() {
 }
 
 func (s *NodeMaterial) Run() {
+	s.lg.Infof("Starting node (rank: %d)", s.rank)
 	conf, err := config.Read(s.LocalConfPath())
 	s.Check(err)
+
+	s.lg.Infof("Creating node server.")
 	srv, err := server.New(conf)
 	s.Check(err)
 	s.lg.Infof("Node PID %d", os.Getpid())
+
+	utils.RegisterNode()
+
 	s.Check(srv.Start())
+	s.lg.Infof("Node server started.")
 
 	go s.DataMonitor()
 }
 
+func (s *NodeMaterial) RunAndWait() {
+	s.Run()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	wg.Wait()
+}
+
 func (s *NodeMaterial) DataMonitor() {
+	s.lg.Infof("Starting node data monitoring.")
 	for {
 		utils.DataSize.Set(float64(utils.GetFolderSize(s.dataPath)))
 		time.Sleep(s.material.config.Cluster.DataSizeCollectionInterval)

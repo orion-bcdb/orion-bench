@@ -29,13 +29,12 @@ type UserWorkload struct {
 	Worker Worker
 
 	// Internal
-	workers         []*UserWorkloadWorker
-	waitInit        sync.WaitGroup
-	waitStart       sync.WaitGroup
-	waitEnd         sync.WaitGroup
-	startTime       time.Time
-	endTime         time.Time
-	aggregatedStats *StatsTime
+	workers   []*UserWorkloadWorker
+	waitInit  sync.WaitGroup
+	waitStart sync.WaitGroup
+	waitEnd   sync.WaitGroup
+	startTime time.Time
+	endTime   time.Time
 }
 
 type UserWorkloadWorker struct {
@@ -45,58 +44,42 @@ type UserWorkloadWorker struct {
 	Backoff       *backoff.ExponentialBackOff
 	Session       bcdb.DBSession
 	WorkloadState interface{}
-	stats         Stats
 }
 
-func (w *UserWorkload) AggregateWorkerStats(collectionTime time.Time) *StatsTime {
-	stats := &StatsTime{CollectionTime: collectionTime}
-	for _, r := range w.workers {
-		stats.AddInPlace(&r.stats)
-	}
-	return stats
-}
-
-func (w *UserWorkload) Report() {
-	beginning := &StatsTime{CollectionTime: w.startTime}
-	if w.aggregatedStats == nil {
-		w.aggregatedStats = beginning
-	}
-
-	stats := w.AggregateWorkerStats(time.Now())
-	stats.Sub(beginning).Report(w.Lg, "Total")
-
-	diff := stats.Sub(w.aggregatedStats)
-	diff.Report(w.Lg, "Window")
-	w.aggregatedStats = stats
-}
-
-func (w *UserWorkload) Serve() {
-	http.Handle("/metrics", promhttp.Handler())
+func (w *UserWorkload) ServePrometheus() {
+	r := utils.RegisterClient()
+	http.Handle("/metrics", promhttp.InstrumentMetricHandler(
+		r, promhttp.HandlerFor(r, promhttp.HandlerOpts{}),
+	))
+	w.Lg.Infof("Starting prometheus listner.")
 	w.Check(http.ListenAndServe(w.material.Worker(w.workerRank).PrometheusServeAddress(), nil))
 }
 
 func (w *UserWorkload) Run() {
-	go w.Serve()
+	w.Lg.Infof("Running workload (rank: %d).", w.workerRank)
+	go w.ServePrometheus()
 
 	users := w.WorkerUsers()
 	w.waitInit.Add(len(users))
 	w.waitStart.Add(1)
 	w.workers = make([]*UserWorkloadWorker, len(users))
+
+	w.Lg.Infof("Initiating workers (%d users).", len(users))
 	for i, userIndex := range users {
 		go w.RunUserWorkload(uint64(i), userIndex)
 	}
 
 	w.waitInit.Wait()
+	w.Lg.Infof("Workers finished initialization.")
+
 	w.startTime = time.Now()
 	w.endTime = w.startTime.Add(w.Config.Workload.Duration)
 	w.waitEnd.Add(len(users))
 
 	w.waitStart.Done()
-	for waitTimeout(&w.waitEnd, w.Config.Workload.LogReportInterval) && w.endTime.After(time.Now()) {
-		w.Report()
-	}
-
-	w.Report()
+	w.Lg.Infof("Workload started.")
+	w.waitEnd.Wait()
+	w.Lg.Infof("Workload ended.")
 }
 
 func NewExponentialBackOff(conf *types.BackoffConf) *backoff.ExponentialBackOff {
@@ -132,9 +115,9 @@ func (w *UserWorkload) RunUserWorkload(workerIndex uint64, userIndex uint64) {
 		start := time.Now()
 		err := work(userWorkload)
 		latency := time.Since(start).Seconds()
+
 		if err == nil {
 			utils.SuccessTx.Observe(latency)
-			userWorkload.stats.SuccessCount++
 			expBackoff.Reset()
 		} else {
 			if m := fullQueueExp.FindStringSubmatch(err.Error()); m != nil {
@@ -143,7 +126,6 @@ func (w *UserWorkload) RunUserWorkload(workerIndex uint64, userIndex uint64) {
 				w.Lg.Errorf("Tx failed: %s", err)
 				utils.FailedTx.Observe(latency)
 			}
-			userWorkload.stats.FailCount++
 
 			duration := expBackoff.NextBackOff()
 			if duration == backoff.Stop {

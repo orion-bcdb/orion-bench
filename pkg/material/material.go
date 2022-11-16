@@ -83,6 +83,7 @@ func (m *BenchMaterial) Node(i uint64) *NodeMaterial {
 	pathName := prefixNode + name
 	server = &NodeMaterial{
 		lg:             m.lg,
+		rank:           i,
 		materialPath:   filepath.Join(m.config.Path.Material, pathName),
 		dataPath:       filepath.Join(m.config.Path.Data, pathName),
 		Address:        m.config.Cluster.Nodes[i],

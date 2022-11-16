@@ -6,8 +6,7 @@ import (
 	"orion-bench/pkg/material"
 	"orion-bench/pkg/types"
 	"orion-bench/pkg/workload/common"
-	"orion-bench/pkg/workload/loads/independent_blind_writes"
-	"orion-bench/pkg/workload/loads/independent_updates"
+	"orion-bench/pkg/workload/loads/independent"
 
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
 )
@@ -18,8 +17,8 @@ type Runner interface {
 }
 
 var workloads = map[string]func(m *common.Workload) interface{}{
-	"independent-updates":      independent_updates.New,
-	"independent-blind-writes": independent_blind_writes.New,
+	"independent-updates":      independent.NewUpdate,
+	"independent-blind-writes": independent.NewBlindWrite,
 }
 
 func New(workerRank uint64, config *types.BenchmarkConf, material *material.BenchMaterial, lg *logger.SugarLogger) Runner {

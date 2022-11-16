@@ -32,7 +32,6 @@ type WorkloadConf struct {
 	UserCount          uint64            `yaml:"user-count"`
 	Session            SessionConf       `yaml:"session"`
 	Duration           time.Duration     `yaml:"duration"`
-	LogReportInterval  time.Duration     `yaml:"log-report-interval"`
 	PrometheusBasePort Port              `yaml:"prometheus-base-port"`
 	Workers            []string          `yaml:"workers"`
 	Parameters         map[string]string `yaml:"parameters"`

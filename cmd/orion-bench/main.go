@@ -5,7 +5,6 @@ package main
 import (
 	"log"
 	"os"
-	"sync"
 
 	"orion-bench/pkg/config"
 )
@@ -24,10 +23,7 @@ func main() {
 			log.Println(c.Material().List())
 		}).Add(
 		"node", "runs an orion node", func(c *config.OrionBenchConfig) {
-			c.Node().Run()
-			var wg sync.WaitGroup
-			wg.Add(1)
-			wg.Wait()
+			c.Node().RunAndWait()
 		}).Add(
 		"init", "initialize the data for the benchmark", func(c *config.OrionBenchConfig) {
 			c.Workload().Init()

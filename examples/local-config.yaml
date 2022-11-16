@@ -5,7 +5,7 @@ server:
   provenance:
     disabled: true
   queuelength:
-    transaction: 50_000
+    transaction: 100_000
     reorderedtransactionbatch: 2
     # ignored
     block: 100_000
@@ -21,4 +21,4 @@ replication:
   tls:
     enabled: false
 experimental:
-  disablecommitphasesigvalidation: false
+  disablecommitphasesigvalidation: true
