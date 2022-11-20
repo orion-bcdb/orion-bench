@@ -3,6 +3,7 @@
 package common
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -48,7 +49,7 @@ func (w *Workload) Replicas() []*sdkconfig.Replica {
 	for _, nodeData := range w.material.AllNodes() {
 		replicas = append(replicas, &sdkconfig.Replica{
 			ID:       nodeData.Crypto.Name(),
-			Endpoint: "http://" + nodeData.Address + ":" + strconv.Itoa(int(nodeData.NodePort)),
+			Endpoint: fmt.Sprintf("http://%s:%d", nodeData.Address, nodeData.NodePort),
 		})
 	}
 	return replicas

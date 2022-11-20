@@ -28,19 +28,26 @@ type ClusterConf struct {
 }
 
 type WorkloadConf struct {
-	Name               string            `yaml:"name"`
-	UserCount          uint64            `yaml:"user-count"`
-	Session            SessionConf       `yaml:"session"`
-	Duration           time.Duration     `yaml:"duration"`
-	PrometheusBasePort Port              `yaml:"prometheus-base-port"`
-	Workers            []string          `yaml:"workers"`
-	Parameters         map[string]string `yaml:"parameters"`
+	Name               string                 `yaml:"name"`
+	UserCount          uint64                 `yaml:"user-count"`
+	Distributions      []WorkloadDistribution `yaml:"distributions"`
+	Session            SessionConf            `yaml:"session"`
+	Duration           time.Duration          `yaml:"duration"`
+	WarmupDuration     time.Duration          `yaml:"warmup-duration"`
+	PrometheusBasePort Port                   `yaml:"prometheus-base-port"`
+	Workers            []string               `yaml:"workers"`
+	Parameters         map[string]string      `yaml:"parameters"`
 }
 
 type SessionConf struct {
 	TxTimeout    time.Duration `yaml:"tx-timeout"`
 	QueryTimeout time.Duration `yaml:"query-timeout"`
 	Backoff      BackoffConf   `yaml:"backoff"`
+}
+
+type WorkloadDistribution struct {
+	Percent   uint32 `yaml:"percent"`
+	Operation string `yaml:"operation"`
 }
 
 type BackoffConf struct {

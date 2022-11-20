@@ -16,8 +16,15 @@ cluster:
   nodes:
     - 127.0.0.1
 workload:
-  name: independent-blind-writes
+  name: independent
   user-count: 512
+  distributions:
+    - percent: 100
+      operation: -write
+#    - percent: 80
+#      operation: -query 50
+#    - percent: 100
+#      operation: -read 1 -write
   parameters:
     lines-per-user: 500
     tx-per-sync: 0
@@ -28,6 +35,7 @@ workload:
     backoff:
       initial-interval: 10ms
   duration: 2m
+  warmup-duration: 1m
   # Each worker will serve at port+rank
   prometheus-base-port: 3000
   # Each worker might run many parallel workloads

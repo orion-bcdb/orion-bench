@@ -13,12 +13,12 @@ import (
 
 type Runner interface {
 	Init()
+	RunWarmup()
 	Run()
 }
 
 var workloads = map[string]func(m *common.Workload) interface{}{
-	"independent-updates":      independent.NewUpdate,
-	"independent-blind-writes": independent.NewBlindWrite,
+	"independent": independent.New,
 }
 
 func New(workerRank uint64, config *types.BenchmarkConf, material *material.BenchMaterial, lg *logger.SugarLogger) Runner {

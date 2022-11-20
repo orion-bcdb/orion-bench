@@ -4,13 +4,11 @@ package common
 
 import (
 	"net/http"
-	"regexp"
 	"sync"
 	"time"
 
 	"orion-bench/pkg/material"
 	"orion-bench/pkg/types"
-	"orion-bench/pkg/utils"
 
 	"github.com/cenkalti/backoff"
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
@@ -19,14 +17,14 @@ import (
 
 type Worker interface {
 	BeforeWork(w *UserWorkloadWorker)
+	Warmup(w *UserWorkloadWorker) error
 	Work(w *UserWorkloadWorker) error
 }
-
-var fullQueueExp = regexp.MustCompile(`(?i)transaction queue is full`)
 
 type UserWorkload struct {
 	Workload
 	Worker Worker
+	Stats  *ClientStats
 
 	// Internal
 	workers   []*UserWorkloadWorker
@@ -47,16 +45,24 @@ type UserWorkloadWorker struct {
 }
 
 func (w *UserWorkload) ServePrometheus() {
-	r := utils.RegisterClient()
 	http.Handle("/metrics", promhttp.InstrumentMetricHandler(
-		r, promhttp.HandlerFor(r, promhttp.HandlerOpts{}),
+		w.Stats.registry, promhttp.HandlerFor(w.Stats.registry, promhttp.HandlerOpts{}),
 	))
 	w.Lg.Infof("Starting prometheus listner.")
 	w.Check(http.ListenAndServe(w.material.Worker(w.workerRank).PrometheusServeAddress(), nil))
 }
 
 func (w *UserWorkload) Run() {
-	w.Lg.Infof("Running workload (rank: %d).", w.workerRank)
+	w.RunAllUsers("workload", w.RunUserWorkload, w.Config.Workload.Duration)
+}
+
+func (w *UserWorkload) RunWarmup() {
+	w.RunAllUsers("workload", w.RunUserWarmup, w.Config.Workload.WarmupDuration)
+}
+
+func (w *UserWorkload) RunAllUsers(name string, userWorkloadFunc func(workerIndex uint64, userIndex uint64), duration time.Duration) {
+	w.Lg.Infof("Running %s (rank: %d).", name, w.workerRank)
+	w.Stats = RegisterClientStats(w.Lg)
 	go w.ServePrometheus()
 
 	users := w.WorkerUsers()
@@ -66,20 +72,20 @@ func (w *UserWorkload) Run() {
 
 	w.Lg.Infof("Initiating workers (%d users).", len(users))
 	for i, userIndex := range users {
-		go w.RunUserWorkload(uint64(i), userIndex)
+		go userWorkloadFunc(uint64(i), userIndex)
 	}
 
 	w.waitInit.Wait()
 	w.Lg.Infof("Workers finished initialization.")
 
 	w.startTime = time.Now()
-	w.endTime = w.startTime.Add(w.Config.Workload.Duration)
+	w.endTime = w.startTime.Add(duration)
 	w.waitEnd.Add(len(users))
 
 	w.waitStart.Done()
-	w.Lg.Infof("Workload started.")
+	w.Lg.Infof("Work started.")
 	w.waitEnd.Wait()
-	w.Lg.Infof("Workload ended.")
+	w.Lg.Infof("Work ended.")
 }
 
 func NewExponentialBackOff(conf *types.BackoffConf) *backoff.ExponentialBackOff {
@@ -95,45 +101,44 @@ func NewExponentialBackOff(conf *types.BackoffConf) *backoff.ExponentialBackOff 
 	return b
 }
 
-func (w *UserWorkload) RunUserWorkload(workerIndex uint64, userIndex uint64) {
+func (w *UserWorkload) InitWorker(workerIndex uint64, userIndex uint64) *UserWorkloadWorker {
 	crypto := w.material.User(userIndex)
 	userWorkload := &UserWorkloadWorker{
 		UserIndex:  userIndex,
 		UserCrypto: crypto,
 		UserName:   crypto.Name(),
+		Backoff:    NewExponentialBackOff(&w.Config.Workload.Session.Backoff),
 		Session:    w.Session(crypto),
 	}
-	expBackoff := NewExponentialBackOff(&w.Config.Workload.Session.Backoff)
-
 	w.workers[workerIndex] = userWorkload
 	w.Worker.BeforeWork(userWorkload)
-	work := w.Worker.Work
+	return userWorkload
+}
+
+func (w *UserWorkload) RunUserWork(workerIndex uint64, userIndex uint64, work func(w *UserWorkloadWorker) error) {
+	userWorkload := w.InitWorker(workerIndex, userIndex)
 	w.waitInit.Done()
 
 	w.waitStart.Wait()
 	for w.endTime.After(time.Now()) {
-		start := time.Now()
 		err := work(userWorkload)
-		latency := time.Since(start).Seconds()
-
 		if err == nil {
-			utils.SuccessTx.Observe(latency)
-			expBackoff.Reset()
+			userWorkload.Backoff.Reset()
 		} else {
-			if m := fullQueueExp.FindStringSubmatch(err.Error()); m != nil {
-				utils.FullQueueTx.Observe(latency)
-			} else {
-				w.Lg.Errorf("Tx failed: %s", err)
-				utils.FailedTx.Observe(latency)
-			}
-
-			duration := expBackoff.NextBackOff()
+			duration := userWorkload.Backoff.NextBackOff()
 			if duration == backoff.Stop {
-				w.Lg.Fatalf("Exponential backoff process stopped")
+				w.Lg.Fatalf("Exponential backoff process stopped. Last error: %s", err)
 			}
 			time.Sleep(duration)
 		}
 	}
-
 	w.waitEnd.Done()
+}
+
+func (w *UserWorkload) RunUserWarmup(workerIndex uint64, userIndex uint64) {
+	w.RunUserWork(workerIndex, userIndex, w.Worker.Warmup)
+}
+
+func (w *UserWorkload) RunUserWorkload(workerIndex uint64, userIndex uint64) {
+	w.RunUserWork(workerIndex, userIndex, w.Worker.Work)
 }
