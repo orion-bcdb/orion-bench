@@ -1,6 +1,7 @@
 package common
 
 import (
+	"net/http"
 	"regexp"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var fullQueueExp = regexp.MustCompile(`(?i)transaction queue is full`)
@@ -35,13 +37,14 @@ func GetCommitOp(sync bool) StatOperation {
 }
 
 type ClientStats struct {
+	lg        *logger.SugarLogger
 	registry  *prometheus.Registry
-	Lg        *logger.SugarLogger
 	operation *prometheus.HistogramVec
+	mux       *http.ServeMux
 }
 
 func (s *ClientStats) Check(err error) {
-	utils.Check(s.Lg, err)
+	utils.Check(s.lg, err)
 }
 
 func (s *ClientStats) mustRegister(cs ...prometheus.Collector) {
@@ -54,20 +57,29 @@ func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
 	var LABELS = []string{"status", "operation"}
 	s := &ClientStats{
 		registry: prometheus.NewRegistry(),
-		Lg:       lg,
+		lg:       lg,
 		operation: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: "client",
 			Name:      "latency_seconds",
 			Help:      "The latency (seconds) of an operation",
 			Buckets:   utils.TimeBuckets,
 		}, LABELS),
+		mux: http.NewServeMux(),
 	}
 	s.mustRegister(
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 		prometheus.NewGoCollector(),
 		s.operation,
 	)
+	s.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
+		s.registry, promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}),
+	))
 	return s
+}
+
+func (s *ClientStats) ServePrometheus(addr string) {
+	s.lg.Infof("Starting prometheus listner on: %s", addr)
+	s.Check(http.ListenAndServe(addr, s.mux))
 }
 
 func (s *ClientStats) getStatus(err error) StatStatus {
@@ -76,7 +88,7 @@ func (s *ClientStats) getStatus(err error) StatStatus {
 	} else if m := fullQueueExp.FindStringSubmatch(err.Error()); m != nil {
 		return FullQueue
 	} else {
-		s.Lg.Errorf("WriteTx failed: %s", err)
+		s.lg.Errorf("WriteTx failed: %s", err)
 		return Failed
 	}
 }

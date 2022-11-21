@@ -10,6 +10,7 @@ import (
 	"orion-bench/pkg/types"
 	"orion-bench/pkg/utils"
 	"orion-bench/pkg/workload"
+	"orion-bench/pkg/workload/loads/independent"
 
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
 	"gopkg.in/yaml.v3"
@@ -22,7 +23,7 @@ type OrionBenchConfig struct {
 
 	// Evaluated lazily
 	material *material.BenchMaterial
-	workload workload.Runner
+	workload *workload.Workload
 }
 
 func ReadConfig(cmd *CommandLineArgs) *OrionBenchConfig {
@@ -67,12 +68,21 @@ func (c *OrionBenchConfig) Material() *material.BenchMaterial {
 	return c.material
 }
 
-func (c *OrionBenchConfig) Workload() workload.Runner {
+var workloads = map[string]func(m *workload.Workload) workload.Worker{
+	"independent": independent.New,
+}
+
+func (c *OrionBenchConfig) Workload() *workload.Workload {
 	if c.workload != nil {
 		return c.workload
 	}
 
+	builder, ok := workloads[c.Config.Workload.Name]
+	if !ok {
+		c.lg.Fatalf("Invalid workload: %s", c.Config.Workload.Name)
+	}
 	c.workload = workload.New(c.Cmd.Rank.Number(), &c.Config, c.Material(), c.lg)
+	c.workload.Worker = builder(c.workload)
 	return c.workload
 }
 

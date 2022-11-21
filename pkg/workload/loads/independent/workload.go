@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"math/rand"
 	"strings"
 
+	"orion-bench/pkg/utils"
+	"orion-bench/pkg/workload"
 	"orion-bench/pkg/workload/common"
 
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
+	"github.com/hyperledger-labs/orion-server/pkg/logger"
 	oriontypes "github.com/hyperledger-labs/orion-server/pkg/types"
 )
 
@@ -23,45 +25,115 @@ type TableData struct {
 }
 
 type Workload struct {
-	common.UserWorkload
+	workload *workload.Workload
+	lg       *logger.SugarLogger
+}
+
+type UserWorkload struct {
+	workload      *workload.Workload
+	params        *workload.UserParameters
+	keyIndex      common.CyclicCounter
+	commitCounter common.CyclicCounter
+	cdf           []WorkloadCdf
+	acl           *oriontypes.AccessControl
 }
 
 type OperationArgs struct {
-	ReadWidth  uint
-	QueryWidth uint
-	Write      bool
+	readWidth  uint64
+	queryWidth uint64
+	writeWidth uint64
 }
 
 type WorkloadCdf struct {
-	CumulativePercent uint32
-	Operation         OperationArgs
+	cumulativePercent uint32
+	operation         OperationArgs
 }
 
-type State struct {
-	LineCounter  uint64
-	LinesPerUser uint64
-	TxPerSync    uint64
-	TxCounter    uint64
-	Cdf          []WorkloadCdf
-	Acl          *oriontypes.AccessControl
+type TxParams struct {
+	readKeys  []string
+	writeKeys []string
+	sync      bool
 }
 
-func New(m *common.Workload) interface{} {
-	ret := &Workload{UserWorkload: common.UserWorkload{Workload: *m}}
-	ret.Worker = ret
-	return ret
+func New(parent *workload.Workload) workload.Worker {
+	return &Workload{workload: parent, lg: parent.Lg}
+}
+
+func (w *Workload) Check(err error) {
+	utils.Check(w.lg, err)
 }
 
 func (w *Workload) Init() {
-	w.CreateTable(tableName)
-	w.AddUsers(tableName)
+	w.workload.CreateTable(tableName)
+	w.workload.AddUsers(tableName)
 }
 
-func (w *Workload) InnerTx(userWorkload *common.UserWorkloadWorker, tx bcdb.DataTxContext, params *TxParams) error {
+func (w *Workload) parseOperation(operation string) OperationArgs {
+	args := OperationArgs{}
+	op := flag.NewFlagSet(operation, flag.ExitOnError)
+	op.Uint64Var(&args.readWidth, "read", 0, "perform read of X keys")
+	op.Uint64Var(&args.queryWidth, "query", 0, "perform range query of X keys")
+	op.Uint64Var(&args.writeWidth, "write", 0, "perform write of X keys")
+	w.Check(op.Parse(strings.Split(operation, " ")))
+	if args.readWidth == 0 && args.queryWidth == 0 && args.writeWidth == 0 {
+		w.lg.Fatalf("an operation must include reads/writes/query.")
+	}
+	if (args.readWidth > 0 || args.writeWidth > 0) && args.queryWidth > 0 {
+		w.lg.Fatalf("an operation can only have query or TX, not both.")
+	}
+	return args
+}
+
+func (w *Workload) MakeWorker(p *workload.UserParameters) workload.UserWorker {
+	linesPerUser := uint64(w.workload.GetConfInt("lines-per-user"))
+	commitsPerSync := uint64(w.workload.GetConfInt("commits-per-sync"))
+	userPos := float64(p.Index) / float64(w.workload.Config.Workload.UserCount)
+	// We start the tx counter with an offset to prevent all users to synchronize concurrently
+	initialCommitCounter := uint64(userPos * float64(commitsPerSync))
+
+	worker := &UserWorkload{
+		workload: w.workload,
+		params:   p,
+		keyIndex: common.CyclicCounter{
+			Value: 0,
+			Size:  linesPerUser,
+		},
+		commitCounter: common.CyclicCounter{
+			Value: initialCommitCounter,
+			Size:  commitsPerSync,
+		},
+	}
+
+	if w.workload.GetConfBool("with-acl") {
+		worker.acl = &oriontypes.AccessControl{
+			ReadWriteUsers:     map[string]bool{p.Name: true},
+			SignPolicyForWrite: oriontypes.AccessControl_ALL,
+		}
+	}
+
+	var distSum uint32 = 0
+	for _, dist := range w.workload.Config.Workload.Distributions {
+		if dist.Percent == 0 {
+			continue
+		}
+		distSum += dist.Percent
+		worker.cdf = append(worker.cdf, WorkloadCdf{
+			cumulativePercent: distSum,
+			operation:         w.parseOperation(dist.Operation),
+		})
+	}
+	if distSum != 100 {
+		w.lg.Fatalf("Operations does not sum to 100. Current sum: %d.", distSum)
+	}
+
+	return worker
+}
+
+func (w *UserWorkload) innerTx(tx bcdb.DataTxContext, params *TxParams) error {
 	writeRecord := &TableData{Counter: 0}
 	for _, k := range params.readKeys {
 		var rawRecord []byte
-		err := w.Stats.TimeOperation(common.Read, func() error {
+		err := w.workload.Stats.TimeOperation(common.Read, func() error {
 			var err error
 			rawRecord, _, err = tx.Get(tableName, k)
 			return err
@@ -74,196 +146,111 @@ func (w *Workload) InnerTx(userWorkload *common.UserWorkloadWorker, tx bcdb.Data
 		}
 
 		readRecord := &TableData{Counter: 0}
-		w.Check(json.Unmarshal(rawRecord, readRecord))
+		w.workload.Check(json.Unmarshal(rawRecord, readRecord))
 		writeRecord.Counter += readRecord.Counter
 	}
 
-	if params.writeKey == "" {
-		return nil
+	for _, k := range params.writeKeys {
+		writeRecord.Counter += 1
+		rawRecord, err := json.Marshal(writeRecord)
+		w.workload.Check(err)
+		err = w.workload.Stats.TimeOperation(common.Write, func() error {
+			return tx.Put(tableName, k, rawRecord, w.acl)
+		})
+		if err != nil {
+			return err
+		}
 	}
 
-	writeRecord.Counter += 1
-	rawRecord, err := json.Marshal(writeRecord)
-	w.Check(err)
-	return w.Stats.TimeOperation(common.Write, func() error {
-		return tx.Put(tableName, params.writeKey, rawRecord, w.getState(userWorkload).Acl)
-	})
+	return nil
 }
 
-func (w *Workload) getState(userWorkload *common.UserWorkloadWorker) *State {
-	return userWorkload.WorkloadState.(*State)
+func (w *UserWorkload) key(line uint64) string {
+	return fmt.Sprintf("%s.%d", w.params.Name, line)
 }
 
-func (w *Workload) key(userWorkload *common.UserWorkloadWorker, line uint64) string {
-	return fmt.Sprintf("%s.%d", userWorkload.UserName, line)
-}
-
-type TxParams struct {
-	readKeys []string
-	writeKey string
-	sync     bool
-}
-
-func nextEntry(curEntry uint64, entryCount uint64) uint64 {
-	return (curEntry + 1) % entryCount
-}
-
-func (w *Workload) getTxKeyRange(userWorkload *common.UserWorkloadWorker, readWidth uint, write bool) *TxParams {
-	state := w.getState(userWorkload)
-	params := &TxParams{
-		sync: write && state.TxPerSync > 0 && state.TxCounter == 0,
+func (w *UserWorkload) keyRange(length uint64) []string {
+	var ret []string
+	// Copy key index to avoid incrementing the global state
+	keyIndex := w.keyIndex
+	for i := uint64(0); i < length; i++ {
+		ret = append(ret, w.key(keyIndex.Value))
+		keyIndex.Inc(1)
 	}
-
-	curLine := state.LineCounter
-	if write {
-		params.writeKey = w.key(userWorkload, curLine)
-	}
-
-	for i := uint(0); i < readWidth; i++ {
-		params.readKeys = append(params.readKeys, w.key(userWorkload, curLine))
-		curLine = nextEntry(curLine, state.LinesPerUser)
-	}
-
-	return params
+	return ret
 }
 
-func (w *Workload) incCounter(userWorkload *common.UserWorkloadWorker, write bool) {
-	state := w.getState(userWorkload)
-	state.LineCounter = nextEntry(state.LineCounter, state.LinesPerUser)
-	if state.TxPerSync > 0 && write {
-		state.TxCounter = nextEntry(state.TxCounter, state.TxPerSync)
+func (w *UserWorkload) getTxParams(readWidth uint64, writeWidth uint64) *TxParams {
+	return &TxParams{
+		sync:      writeWidth > 0 && w.commitCounter.Size > 0 && w.commitCounter.Value == 0,
+		readKeys:  w.keyRange(readWidth),
+		writeKeys: w.keyRange(writeWidth),
 	}
 }
 
-func (w *Workload) query(userWorkload *common.UserWorkloadWorker, width uint) error {
-	tx, err := userWorkload.Session.Query()
+func (w *UserWorkload) incCounter(writeWidth uint64) {
+	w.keyIndex.Inc(common.Max(1, writeWidth))
+	if writeWidth > 0 {
+		w.commitCounter.Inc(1)
+	}
+}
+
+func (w *UserWorkload) query(width uint64) error {
+	tx, err := w.params.Session.Query()
 	if err != nil {
 		return err
 	}
 
-	state := w.getState(userWorkload)
-	startKey := w.key(userWorkload, nextEntry(state.LineCounter, state.LinesPerUser))
-	return w.Stats.TimeOperation(common.Query, func() error {
-		_, err := tx.GetDataByRange(tableName, startKey, "", uint64(width))
+	return w.workload.Stats.TimeOperation(common.Query, func() error {
+		_, err := tx.GetDataByRange(tableName, w.key(w.keyIndex.Value), "", width)
 		// No need to consume the iterator since the values already fetched
 		return err
 	})
 }
 
-func (w *Workload) transaction(userWorkload *common.UserWorkloadWorker, params *TxParams) error {
-	tx, err := userWorkload.Session.DataTx()
+func (w *UserWorkload) transaction(params *TxParams) error {
+	tx, err := w.params.Session.DataTx()
 	if err != nil {
 		return err
 	}
-	defer w.CheckAbort(tx)
-	if err = w.InnerTx(userWorkload, tx, params); err != nil {
+	defer w.workload.CheckAbort(tx)
+	if err = w.innerTx(tx, params); err != nil {
 		return err
 	}
-	if params.writeKey == "" {
+	if len(params.writeKeys) == 0 {
 		return nil
 	}
 
-	return w.Stats.TimeOperation(common.GetCommitOp(params.sync), func() error {
-		return w.CommitSync(tx, params.sync)
+	return w.workload.Stats.TimeOperation(common.GetCommitOp(params.sync), func() error {
+		return w.workload.CommitSync(tx, params.sync)
 	})
 }
 
-func (w *Workload) parseOperation(operation string) OperationArgs {
-	args := OperationArgs{}
-	op := flag.NewFlagSet(operation, flag.ExitOnError)
-	op.UintVar(&args.ReadWidth, "read", 0, "perform read of X keys")
-	op.UintVar(&args.QueryWidth, "query", 0, "perform range query of X keys")
-	op.BoolVar(&args.Write, "write", false, "perform write")
-	w.Check(op.Parse(strings.Split(operation, " ")))
-	if args.ReadWidth == 0 && args.QueryWidth == 0 && !args.Write {
-		w.Lg.Fatalf("an operation must include reads/writes/query.")
+func (w *UserWorkload) drawOperation(workType workload.WorkType) *OperationArgs {
+	if workType == workload.Warmup {
+		return &OperationArgs{writeWidth: 1, queryWidth: 0, readWidth: 0}
 	}
-	if (args.ReadWidth > 0 || args.Write) && args.QueryWidth > 0 {
-		w.Lg.Fatalf("a work can only have query or TX, not both.")
-	}
-	return args
-}
-
-func (w *Workload) BeforeWork(userWorkload *common.UserWorkloadWorker) {
-	linesPerUser := uint64(w.GetConfInt("lines-per-user"))
-	txPerSync := uint64(w.GetConfInt("tx-per-sync"))
-	userPos := float64(userWorkload.UserIndex) / float64(w.Workload.Config.Workload.UserCount-1)
-	// We start the tx counter with an offset to prevent all users to synchronize concurrently
-	initialTxCounter := uint64(math.Round(userPos * float64(txPerSync)))
-
-	state := &State{
-		LineCounter:  0,
-		LinesPerUser: linesPerUser,
-		TxPerSync:    txPerSync,
-		TxCounter:    initialTxCounter,
-	}
-
-	if w.GetConfBool("with-acl") {
-		state.Acl = &oriontypes.AccessControl{
-			ReadWriteUsers:     map[string]bool{userWorkload.UserName: true},
-			SignPolicyForWrite: oriontypes.AccessControl_ALL,
-		}
-	}
-
-	var distSum uint32 = 0
-	for _, dist := range w.Workload.Config.Workload.Distributions {
-		if dist.Percent == 0 {
-			continue
-		}
-		distSum += dist.Percent
-		state.Cdf = append(state.Cdf, WorkloadCdf{
-			CumulativePercent: distSum,
-			Operation:         w.parseOperation(dist.Operation),
-		})
-	}
-	if distSum != 100 {
-		w.Lg.Fatalf("Operations does not sum to 100. Current sum: %d.", distSum)
-	}
-
-	userWorkload.WorkloadState = state
-}
-
-func (w *Workload) drawOperation(userWorkload *common.UserWorkloadWorker) *OperationArgs {
-	state := w.getState(userWorkload)
 	coin := uint32(rand.Float64() * 100)
-	for _, dist := range state.Cdf {
-		if dist.CumulativePercent > coin {
-			return &dist.Operation
+	for _, dist := range w.cdf {
+		if dist.cumulativePercent > coin {
+			return &dist.operation
 		}
 	}
-	return &state.Cdf[len(state.Cdf)-1].Operation
+	return &w.cdf[len(w.cdf)-1].operation
 }
 
-func (w *Workload) WorkQuery(userWorkload *common.UserWorkloadWorker, op *OperationArgs) error {
-	return w.query(userWorkload, op.QueryWidth)
-}
-
-func (w *Workload) WorkTx(userWorkload *common.UserWorkloadWorker, op *OperationArgs) error {
-	params := w.getTxKeyRange(userWorkload, op.ReadWidth, op.Write)
-	return w.transaction(userWorkload, params)
-}
-
-func (w *Workload) Warmup(userWorkload *common.UserWorkloadWorker) error {
-	op := &OperationArgs{Write: true, QueryWidth: 0, ReadWidth: 0}
-	err := w.WorkTx(userWorkload, op)
-	if err == nil {
-		w.incCounter(userWorkload, op.Write)
-	}
-	return err
-}
-
-func (w *Workload) Work(userWorkload *common.UserWorkloadWorker) error {
-	op := w.drawOperation(userWorkload)
+func (w *UserWorkload) Work(workType workload.WorkType) error {
+	op := w.drawOperation(workType)
 
 	var err error
-	if op.QueryWidth > 0 {
-		err = w.WorkQuery(userWorkload, op)
+	if op.queryWidth > 0 {
+		err = w.query(op.queryWidth)
 	} else {
-		err = w.WorkTx(userWorkload, op)
+		err = w.transaction(w.getTxParams(op.readWidth, op.writeWidth))
 	}
 
 	if err == nil {
-		w.incCounter(userWorkload, op.Write)
+		w.incCounter(op.writeWidth)
 	}
 	return err
 }

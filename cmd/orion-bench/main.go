@@ -28,11 +28,11 @@ func main() {
 		"init", "initialize the data for the benchmark", func(c *config.OrionBenchConfig) {
 			c.Workload().Init()
 		}).Add(
-		"warmup", "run workload generator (client) for warmup", func(c *config.OrionBenchConfig) {
+		"warmup", "runs a workload generator (client) for warmup", func(c *config.OrionBenchConfig) {
 			c.Workload().RunWarmup()
 		}).Add(
-		"workload", "runs a workload generator (client)", func(c *config.OrionBenchConfig) {
-			c.Workload().Run()
+		"benchmark", "runs a workload generator (client) for benchmark", func(c *config.OrionBenchConfig) {
+			c.Workload().RunBenchmark()
 		}).Add(
 		"prometheus", "runs a prometheus server to collect the data", func(c *config.OrionBenchConfig) {
 			c.Material().Prometheus().Run()

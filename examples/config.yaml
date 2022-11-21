@@ -20,14 +20,14 @@ workload:
   user-count: 512
   distributions:
     - percent: 100
-      operation: -write
+      operation: -read 5
 #    - percent: 80
 #      operation: -query 50
 #    - percent: 100
 #      operation: -read 1 -write
   parameters:
     lines-per-user: 500
-    tx-per-sync: 0
+    commits-per-sync: 0
     with-acl: false
   session:
     tx-timeout: 120s
