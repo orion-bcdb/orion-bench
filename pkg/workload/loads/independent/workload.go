@@ -3,26 +3,23 @@
 package independent
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math/rand"
 	"strings"
 
+	"orion-bench/pkg/types"
 	"orion-bench/pkg/utils"
 	"orion-bench/pkg/workload"
 	"orion-bench/pkg/workload/common"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
 	oriontypes "github.com/hyperledger-labs/orion-server/pkg/types"
 )
 
 const tableName = "benchmark_db"
-
-type TableData struct {
-	Counter uint64 `json:"counter"`
-}
 
 type Workload struct {
 	workload *workload.Workload
@@ -130,7 +127,7 @@ func (w *Workload) MakeWorker(p *workload.UserParameters) workload.UserWorker {
 }
 
 func (w *UserWorkload) innerTx(tx bcdb.DataTxContext, params *TxParams) error {
-	writeRecord := &TableData{Counter: 0}
+	writeRecord := &types.TableData{Counter: 0}
 	for _, k := range params.readKeys {
 		var rawRecord []byte
 		err := w.workload.Stats.TimeOperation(common.Read, func() error {
@@ -145,14 +142,14 @@ func (w *UserWorkload) innerTx(tx bcdb.DataTxContext, params *TxParams) error {
 			continue
 		}
 
-		readRecord := &TableData{Counter: 0}
-		w.workload.Check(json.Unmarshal(rawRecord, readRecord))
+		readRecord := &types.TableData{Counter: 0}
+		w.workload.Check(proto.Unmarshal(rawRecord, readRecord))
 		writeRecord.Counter += readRecord.Counter
 	}
 
 	for _, k := range params.writeKeys {
 		writeRecord.Counter += 1
-		rawRecord, err := json.Marshal(writeRecord)
+		rawRecord, err := proto.Marshal(writeRecord)
 		w.workload.Check(err)
 		err = w.workload.Stats.TimeOperation(common.Write, func() error {
 			return tx.Put(tableName, k, rawRecord, w.acl)

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package workload;
+
+option go_package = "pkg/types";
+
+message TableData {
+  uint64 counter = 1;
+}

@@ -19,12 +19,12 @@ workload:
   name: independent
   user-count: 512
   distributions:
-    - percent: 100
+    - percent: 10
       operation: -read 5
-#    - percent: 80
-#      operation: -query 50
-#    - percent: 100
-#      operation: -read 1 -write
+    - percent: 70
+      operation: -query 50
+    - percent: 20
+      operation: -read 1 -write 1
   parameters:
     lines-per-user: 500
     commits-per-sync: 0
