@@ -28,15 +28,16 @@ type ClusterConf struct {
 }
 
 type WorkloadConf struct {
-	Name               string                 `yaml:"name"`
-	UserCount          uint64                 `yaml:"user-count"`
-	Distributions      []WorkloadDistribution `yaml:"distributions"`
-	Session            SessionConf            `yaml:"session"`
-	Duration           time.Duration          `yaml:"duration"`
-	WarmupDuration     time.Duration          `yaml:"warmup-duration"`
-	PrometheusBasePort Port                   `yaml:"prometheus-base-port"`
-	Workers            []string               `yaml:"workers"`
-	Parameters         map[string]string      `yaml:"parameters"`
+	Name               string              `yaml:"name"`
+	UserCount          uint64              `yaml:"user-count"`
+	Operations         []WorkloadOperation `yaml:"operations"`
+	WarmupOperations   []WorkloadOperation `yaml:"warmup-operations"`
+	Session            SessionConf         `yaml:"session"`
+	Duration           time.Duration       `yaml:"duration"`
+	WarmupDuration     time.Duration       `yaml:"warmup-duration"`
+	PrometheusBasePort Port                `yaml:"prometheus-base-port"`
+	Workers            []string            `yaml:"workers"`
+	Parameters         map[string]string   `yaml:"parameters"`
 }
 
 type SessionConf struct {
@@ -45,9 +46,9 @@ type SessionConf struct {
 	Backoff      BackoffConf   `yaml:"backoff"`
 }
 
-type WorkloadDistribution struct {
-	Percent   uint32 `yaml:"percent"`
+type WorkloadOperation struct {
 	Operation string `yaml:"operation"`
+	Weight    uint   `default:"1" yaml:"weight"`
 }
 
 type BackoffConf struct {

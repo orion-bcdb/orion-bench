@@ -8,6 +8,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"sync/atomic"
+	"unsafe"
 
 	"orion-bench/pkg/utils"
 
@@ -36,7 +38,7 @@ type CryptoMaterial struct {
 
 	// Evaluated lazily
 	cert    *x509.Certificate
-	signer  crypto.Signer
+	signer  unsafe.Pointer
 	keyPair *tls.Certificate
 }
 
@@ -115,18 +117,20 @@ func (u *CryptoMaterial) Cert() *x509.Certificate {
 }
 
 func (u *CryptoMaterial) Signer() crypto.Signer {
-	if u.signer != nil {
-		return u.signer
+	signerPtr := atomic.LoadPointer(&u.signer)
+	if signerPtr != nil {
+		return *(*crypto.Signer)(signerPtr)
 	}
-
 	signer, err := crypto.NewSigner(&crypto.SignerOptions{
 		Identity:    u.name,
 		KeyFilePath: u.KeyPath(),
 	})
 	u.Check(err)
-
-	u.signer = signer
-	return signer
+	swapped := atomic.CompareAndSwapPointer(&u.signer, nil, unsafe.Pointer(&signer))
+	if swapped {
+		return signer
+	}
+	return *(*crypto.Signer)(atomic.LoadPointer(&u.signer))
 }
 
 func (u *CryptoMaterial) KeyPair() *tls.Certificate {

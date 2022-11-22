@@ -18,6 +18,8 @@ import (
 	"github.com/cenkalti/backoff"
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
 	sdkconfig "github.com/hyperledger-labs/orion-sdk-go/pkg/config"
+	"github.com/hyperledger-labs/orion-server/pkg/crypto"
+	"github.com/hyperledger-labs/orion-server/pkg/cryptoservice"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
 	oriontypes "github.com/hyperledger-labs/orion-server/pkg/types"
 )
@@ -29,7 +31,7 @@ const Benchmark WorkType = "benchmark"
 
 type Worker interface {
 	Init()
-	MakeWorker(p *UserParameters) UserWorker
+	MakeWorker(userIndex uint64) UserWorker
 }
 
 type UserWorker interface {
@@ -40,8 +42,8 @@ type Workload struct {
 	Lg         *logger.SugarLogger
 	Config     *types.BenchmarkConf
 	Stats      *common.ClientStats
-	material   *material.BenchMaterial
-	workerRank uint64
+	Material   *material.BenchMaterial
+	WorkerRank uint64
 	Worker     Worker
 
 	// Evaluated lazily
@@ -54,10 +56,11 @@ type Workload struct {
 }
 
 type UserParameters struct {
-	Index   uint64
-	Name    string
-	Crypto  *material.CryptoMaterial
-	Session bcdb.DBSession
+	Index    uint64
+	Name     string
+	Material *material.BenchMaterial
+	Crypto   *material.CryptoMaterial
+	Session  bcdb.DBSession
 }
 
 func New(
@@ -67,8 +70,8 @@ func New(
 		Lg:         lg,
 		Config:     config,
 		Stats:      common.RegisterClientStats(lg),
-		material:   benchMaterial,
-		workerRank: workerRank,
+		Material:   benchMaterial,
+		WorkerRank: workerRank,
 		sessions:   &sync.Map{},
 	}
 }
@@ -79,7 +82,7 @@ func (w *Workload) Check(err error) {
 
 func (w *Workload) Replicas() []*sdkconfig.Replica {
 	var replicas []*sdkconfig.Replica
-	for _, nodeData := range w.material.AllNodes() {
+	for _, nodeData := range w.Material.AllNodes() {
 		//goland:noinspection HttpUrlsUsage
 		replicas = append(replicas, &sdkconfig.Replica{
 			ID:       nodeData.Crypto.Name(),
@@ -96,7 +99,7 @@ func (w *Workload) DB() bcdb.BCDB {
 	}
 	db, err := bcdb.Create(&sdkconfig.ConnectionConfig{
 		ReplicaSet: w.Replicas(),
-		RootCAs:    []string{w.material.RootUser().CertPath()},
+		RootCAs:    []string{w.Material.RootUser().CertPath()},
 		Logger:     w.Lg,
 		//TLSConfig:  c.Material().ServerTLS(),
 	})
@@ -128,11 +131,11 @@ func (w *Workload) Session(userCrypto *material.CryptoMaterial) bcdb.DBSession {
 }
 
 func (w *Workload) AdminSession() bcdb.DBSession {
-	return w.Session(w.material.AdminUser())
+	return w.Session(w.Material.AdminUser())
 }
 
 func (w *Workload) UserSession(i uint64) bcdb.DBSession {
-	return w.Session(w.material.User(i))
+	return w.Session(w.Material.User(i))
 }
 
 func (w *Workload) CheckAbort(tx bcdb.TxContext) {
@@ -143,7 +146,7 @@ func (w *Workload) CheckAbort(tx bcdb.TxContext) {
 }
 
 func (w *Workload) CheckCommit(tx bcdb.TxContext) {
-	w.Check(w.Commit(tx))
+	w.Check(w.CommitSync(tx, true))
 }
 
 func (w *Workload) CommitSync(tx bcdb.TxContext, sync bool) error {
@@ -154,12 +157,27 @@ func (w *Workload) CommitSync(tx bcdb.TxContext, sync bool) error {
 	return err
 }
 
-func (w *Workload) Commit(tx bcdb.TxContext) error {
-	return w.CommitSync(tx, true)
+func sign(s crypto.Signer, txEnv *oriontypes.DataTxEnvelope) error {
+	sig, err := cryptoservice.SignTx(s, txEnv.Payload)
+	if err != nil {
+		return err
+	}
+	txEnv.Signatures[s.Identity()] = sig
+	return nil
 }
 
-func (w *Workload) BlindCommit(tx bcdb.TxContext) error {
-	return w.CommitSync(tx, false)
+func (w *Workload) MultiSignDataTx(tx bcdb.DataTxContext, signers []crypto.Signer) (*oriontypes.DataTxEnvelope, error) {
+	msg, err := tx.SignConstructedTxEnvelopeAndCloseTx()
+	if err != nil {
+		return nil, err
+	}
+	txEnv := msg.(*oriontypes.DataTxEnvelope)
+	for _, s := range signers {
+		if err = sign(s, txEnv); err != nil {
+			return nil, err
+		}
+	}
+	return txEnv, nil
 }
 
 func (w *Workload) CreateTable(tableName string, indices ...string) {
@@ -187,7 +205,7 @@ func (w *Workload) AddUsers(dbName ...string) {
 	tx, err := w.AdminSession().UsersTx()
 	w.Check(err)
 	defer w.CheckAbort(tx)
-	for _, user := range w.material.AllUsers() {
+	for _, user := range w.Material.AllUsers() {
 		w.Check(tx.PutUser(&oriontypes.User{
 			Id:          user.Name(),
 			Certificate: user.Cert().Raw,
@@ -220,7 +238,7 @@ func (w *Workload) GetConfBool(key string) bool {
 }
 
 func (w *Workload) WorkerUsers() []uint64 {
-	r := w.workerRank
+	r := w.WorkerRank
 	c := uint64(len(w.Config.Workload.Workers))
 	var users []uint64
 	for i := r; i < w.Config.Workload.UserCount; i += c {
@@ -230,7 +248,7 @@ func (w *Workload) WorkerUsers() []uint64 {
 }
 
 func (w *Workload) ServePrometheus() {
-	w.Stats.ServePrometheus(w.material.Worker(w.workerRank).PrometheusServeAddress())
+	w.Stats.ServePrometheus(w.Material.Worker(w.WorkerRank).PrometheusServeAddress())
 }
 
 func (w *Workload) Init() {
@@ -248,7 +266,7 @@ func (w *Workload) RunWarmup() {
 func (w *Workload) RunAllUsers(workType WorkType, duration time.Duration) {
 	go w.ServePrometheus()
 
-	w.Lg.Infof("Running %s (rank: %d).", workType, w.workerRank)
+	w.Lg.Infof("Running %s (rank: %d).", workType, w.WorkerRank)
 
 	w.waitInit = &sync.WaitGroup{}
 	w.waitStart = &sync.WaitGroup{}
@@ -288,18 +306,8 @@ func NewExponentialBackOff(conf *types.BackoffConf) *backoff.ExponentialBackOff 
 	return b
 }
 
-func (w *Workload) InitWorker(userIndex uint64) UserWorker {
-	crypto := w.material.User(userIndex)
-	return w.Worker.MakeWorker(&UserParameters{
-		Index:   userIndex,
-		Crypto:  crypto,
-		Name:    crypto.Name(),
-		Session: w.Session(crypto),
-	})
-}
-
 func (w *Workload) RunUserWork(userIndex uint64, workType WorkType) {
-	worker := w.InitWorker(userIndex)
+	worker := w.Worker.MakeWorker(userIndex)
 	expBackoff := NewExponentialBackOff(&w.Config.Workload.Session.Backoff)
 	w.waitInit.Done()
 

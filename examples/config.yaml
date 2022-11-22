@@ -18,17 +18,18 @@ cluster:
 workload:
   name: independent
   user-count: 512
-  distributions:
-    - percent: 10
-      operation: -read 5
-    - percent: 70
-      operation: -query 50
-    - percent: 20
-      operation: -read 1 -write 1
+  warmup-operations:
+    - operation: -read 1 -write 1 -acl 3
+  operations:
+#    - operation: -read 5
+#      weight: 10
+#    - operation: -query 50
+#      weight: 70
+    - operation: -read 1 -write 1 -acl 3
+      weight: 20
   parameters:
     lines-per-user: 500
     commits-per-sync: 0
-    with-acl: false
   session:
     tx-timeout: 120s
     query-timeout: 120s
