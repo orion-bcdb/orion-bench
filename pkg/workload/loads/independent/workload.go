@@ -60,7 +60,7 @@ type TxParams struct {
 	writeKeys []string
 	acl       *oriontypes.AccessControl
 	sync      bool
-	needSign  []crypto.Signer
+	needSign  map[string]crypto.Signer
 }
 
 func New(parent *workload.Workload) workload.Worker {
@@ -165,7 +165,7 @@ func (w *UserWorkload) read(tx bcdb.DataTxContext, key string) (*types.TableData
 
 	readRecord := &types.TableData{}
 	if rawRecord != nil {
-		w.workload.Check(proto.Unmarshal(rawRecord, readRecord))
+		w.Check(proto.Unmarshal(rawRecord, readRecord))
 	}
 	return readRecord, metadata, nil
 }
@@ -176,7 +176,7 @@ func (w *UserWorkload) write(
 	var rawRecord []byte
 	if value != nil {
 		raw, err := proto.Marshal(value)
-		w.workload.Check(err)
+		w.Check(err)
 		rawRecord = raw
 	}
 	return w.workload.Stats.TimeOperation(common.Write, func() error {
@@ -187,14 +187,12 @@ func (w *UserWorkload) write(
 func (w *UserWorkload) commit(tx bcdb.TxContext, params *TxParams) error {
 	dataTx, isDataTx := tx.(bcdb.DataTxContext)
 	if isDataTx && len(params.needSign) > 0 {
-		txEnv, err := w.workload.MultiSignDataTx(dataTx, params.needSign)
+		txEnv := w.workload.MultiSignDataTx(dataTx, params.needSign)
+		newTx, err := w.userSession.LoadDataTx(txEnv)
 		if err != nil {
 			return err
 		}
-		tx, err = w.userSession.LoadDataTx(txEnv)
-		if err != nil {
-			return err
-		}
+		tx = newTx
 	}
 
 	return w.workload.Stats.TimeOperation(common.GetCommitOp(params.sync), func() error {
@@ -218,18 +216,15 @@ func (w *UserWorkload) innerTx(tx bcdb.DataTxContext, params *TxParams) error {
 	}
 
 	for _, k := range params.writeKeys {
-		record, _ := records[k]
-		if err := w.write(tx, k, record, params.acl); err != nil {
+		if err := w.write(tx, k, records[k], params.acl); err != nil {
 			return err
 		}
 
-		prevAcl, _ := acl[k]
-		if prevAcl != nil {
+		if prevAcl := acl[k]; prevAcl != nil {
 			for user := range prevAcl.ReadWriteUsers {
-				if user == w.userName {
-					continue
+				if user != w.userName {
+					params.needSign[user] = w.signers[user]
 				}
-				params.needSign = append(params.needSign, w.signers[user])
 			}
 		}
 	}
@@ -278,6 +273,7 @@ func (w *UserWorkload) getTxParams(args *OperationArgs) *TxParams {
 		readKeys:  w.keyRange(args.reads),
 		writeKeys: w.keyRange(args.writes),
 		acl:       w.getAcl(args.aclUsers),
+		needSign:  map[string]crypto.Signer{},
 	}
 }
 

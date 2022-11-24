@@ -157,27 +157,20 @@ func (w *Workload) CommitSync(tx bcdb.TxContext, sync bool) error {
 	return err
 }
 
-func sign(s crypto.Signer, txEnv *oriontypes.DataTxEnvelope) error {
+func (w *Workload) sign(s crypto.Signer, txEnv *oriontypes.DataTxEnvelope) {
 	sig, err := cryptoservice.SignTx(s, txEnv.Payload)
-	if err != nil {
-		return err
-	}
+	w.Check(err)
 	txEnv.Signatures[s.Identity()] = sig
-	return nil
 }
 
-func (w *Workload) MultiSignDataTx(tx bcdb.DataTxContext, signers []crypto.Signer) (*oriontypes.DataTxEnvelope, error) {
+func (w *Workload) MultiSignDataTx(tx bcdb.DataTxContext, signers map[string]crypto.Signer) *oriontypes.DataTxEnvelope {
 	msg, err := tx.SignConstructedTxEnvelopeAndCloseTx()
-	if err != nil {
-		return nil, err
-	}
+	w.Check(err)
 	txEnv := msg.(*oriontypes.DataTxEnvelope)
 	for _, s := range signers {
-		if err = sign(s, txEnv); err != nil {
-			return nil, err
-		}
+		w.sign(s, txEnv)
 	}
-	return txEnv, nil
+	return txEnv
 }
 
 func (w *Workload) CreateTable(tableName string, indices ...string) {
@@ -321,6 +314,7 @@ func (w *Workload) RunUserWork(userIndex uint64, workType WorkType) {
 			if duration == backoff.Stop {
 				w.Lg.Fatalf("Exponential backoff process stopped. Last error: %s", err)
 			}
+			w.Stats.ObserveBackoff(duration)
 			time.Sleep(duration)
 		}
 	}

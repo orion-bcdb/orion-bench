@@ -40,6 +40,7 @@ type ClientStats struct {
 	lg        *logger.SugarLogger
 	registry  *prometheus.Registry
 	operation *prometheus.HistogramVec
+	backoff   prometheus.Histogram
 	mux       *http.ServeMux
 }
 
@@ -64,12 +65,19 @@ func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
 			Help:      "The latency (seconds) of an operation",
 			Buckets:   utils.TimeBuckets,
 		}, LABELS),
+		backoff: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: "client",
+			Name:      "backoff_seconds",
+			Help:      "The backoff (seconds) of a worker",
+			Buckets:   utils.TimeBuckets,
+		}),
 		mux: http.NewServeMux(),
 	}
 	s.mustRegister(
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 		prometheus.NewGoCollector(),
 		s.operation,
+		s.backoff,
 	)
 	s.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
 		s.registry, promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}),
@@ -91,6 +99,10 @@ func (s *ClientStats) getStatus(err error) StatStatus {
 		s.lg.Errorf("WriteTx failed: %s", err)
 		return Failed
 	}
+}
+
+func (s *ClientStats) ObserveBackoff(duration time.Duration) {
+	s.backoff.Observe(duration.Seconds())
 }
 
 func (s *ClientStats) ObserveOperationLatency(

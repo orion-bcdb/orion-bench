@@ -19,23 +19,24 @@ workload:
   name: independent
   user-count: 512
   warmup-operations:
-    - operation: -read 1 -write 1 -acl 3
+    - operation: -write 1 -acl 0
   operations:
 #    - operation: -read 5
 #      weight: 10
 #    - operation: -query 50
 #      weight: 70
-    - operation: -read 1 -write 1 -acl 3
+    - operation: -write 1 -acl 0
       weight: 20
   parameters:
-    lines-per-user: 500
+    lines-per-user: 1_000
     commits-per-sync: 0
   session:
-    tx-timeout: 120s
-    query-timeout: 120s
+    tx-timeout: 10s
+    query-timeout: 10s
     backoff:
       initial-interval: 10ms
-  duration: 2m
+      max-interval: 5s
+  duration: 24h
   warmup-duration: 1m
   # Each worker will serve at port+rank
   prometheus-base-port: 3000
