@@ -8,7 +8,7 @@ server:
     transaction: 100_000
     reorderedtransactionbatch: 2
     # ignored
-    block: 100_000
+    block: 1
   queryprocessing:
     responsesizelimitinbytes: 1_000_000
   tls:
@@ -21,4 +21,4 @@ replication:
   tls:
     enabled: false
 experimental:
-  disablecommitphasesigvalidation: true
+  disablecommitphasesigvalidation: false

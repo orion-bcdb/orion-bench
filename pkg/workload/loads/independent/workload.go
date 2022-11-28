@@ -19,6 +19,7 @@ import (
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
 	oriontypes "github.com/hyperledger-labs/orion-server/pkg/types"
 	"github.com/mroth/weightedrand"
+	"github.com/pkg/errors"
 )
 
 const tableName = "benchmark_db"
@@ -44,23 +45,24 @@ type UserWorkload struct {
 }
 
 type OperationArgs struct {
-	reads    uint64
-	queries  uint64
-	writes   uint64
-	aclUsers uint64
-}
-
-type WorkloadWightedOperation struct {
-	cumulativeWeight uint64
-	operation        OperationArgs
+	name      string
+	reads     uint64
+	queries   uint64
+	writes    uint64
+	conflicts uint64
+	aclUsers  uint64
 }
 
 type TxParams struct {
-	readKeys  []string
-	writeKeys []string
-	acl       *oriontypes.AccessControl
-	sync      bool
-	needSign  map[string]crypto.Signer
+	tx          bcdb.TxContext
+	readKeys    []string
+	writeKeys   []string
+	writeAcl    *oriontypes.AccessControl
+	commit      bool
+	sync        bool
+	needSign    map[string]crypto.Signer
+	readRecords map[string]*types.TableData
+	readAcl     map[string]*oriontypes.AccessControl
 }
 
 func New(parent *workload.Workload) workload.Worker {
@@ -117,11 +119,14 @@ func (w *UserWorkload) Check(err error) {
 }
 
 func (w *UserWorkload) parseOperation(operation string) *OperationArgs {
-	args := &OperationArgs{}
+	args := &OperationArgs{
+		name: operation,
+	}
 	op := flag.NewFlagSet(operation, flag.ExitOnError)
 	op.Uint64Var(&args.reads, "read", 0, "read X keys")
 	op.Uint64Var(&args.queries, "query", 0, "query X keys")
 	op.Uint64Var(&args.writes, "write", 0, "write X keys")
+	op.Uint64Var(&args.conflicts, "conflict", 0, "run X concurrent conflicting reads TXs")
 	op.Uint64Var(&args.aclUsers, "acl", 0, "require sig of X users")
 	w.Check(op.Parse(strings.Split(operation, " ")))
 	if args.reads == 0 && args.queries == 0 && args.writes == 0 {
@@ -131,8 +136,12 @@ func (w *UserWorkload) parseOperation(operation string) *OperationArgs {
 		w.lg.Fatalf("an operation can only have query or TX, not both.")
 	}
 	if args.aclUsers > 0 && args.writes == 0 {
-		w.lg.Fatalf("an operation can must have atleast one write to include ACL.")
+		w.lg.Fatalf("an operation must have atleast one write to include ACL.")
 	}
+	if args.conflicts > 0 && args.writes == 0 {
+		w.lg.Fatalf("operation with conflicts must have writes.")
+	}
+
 	return args
 }
 
@@ -154,10 +163,10 @@ func (w *UserWorkload) makeOperationChooser(ops []types.WorkloadOperation) *weig
 func (w *UserWorkload) read(tx bcdb.DataTxContext, key string) (*types.TableData, *oriontypes.Metadata, error) {
 	var rawRecord []byte
 	var metadata *oriontypes.Metadata
-	err := w.workload.Stats.TimeOperation(common.Read, func() error {
+	err := w.workload.Stats.TimeOperation(common.Read, func() (uint64, error) {
 		var err error
 		rawRecord, metadata, err = tx.Get(tableName, key)
-		return err
+		return 1, err
 	})
 	if err != nil {
 		return nil, nil, err
@@ -179,57 +188,76 @@ func (w *UserWorkload) write(
 		w.Check(err)
 		rawRecord = raw
 	}
-	return w.workload.Stats.TimeOperation(common.Write, func() error {
-		return tx.Put(tableName, key, rawRecord, acl)
+	return w.workload.Stats.TimeOperation(common.Write, func() (uint64, error) {
+		return 1, tx.Put(tableName, key, rawRecord, acl)
 	})
 }
 
-func (w *UserWorkload) commit(tx bcdb.TxContext, params *TxParams) error {
-	dataTx, isDataTx := tx.(bcdb.DataTxContext)
+func (w *UserWorkload) txCommit(params *TxParams) error {
+	if !params.commit {
+		return nil
+	}
+
+	dataTx, isDataTx := params.tx.(bcdb.DataTxContext)
 	if isDataTx && len(params.needSign) > 0 {
 		txEnv := w.workload.MultiSignDataTx(dataTx, params.needSign)
 		newTx, err := w.userSession.LoadDataTx(txEnv)
-		if err != nil {
-			return err
-		}
-		tx = newTx
+		w.Check(err)
+		params.tx = newTx
 	}
 
-	return w.workload.Stats.TimeOperation(common.GetCommitOp(params.sync), func() error {
-		return w.workload.CommitSync(tx, params.sync)
+	err := w.workload.Stats.TimeOperation(common.GetCommitOp(params.sync), func() (uint64, error) {
+		return 1, w.workload.CommitSync(params.tx, params.sync)
 	})
+
+	if err != nil {
+		w.commitCounter.Inc(1)
+	}
+
+	return err
 }
 
-func (w *UserWorkload) innerTx(tx bcdb.DataTxContext, params *TxParams) error {
-	records := map[string]*types.TableData{}
-	acl := map[string]*oriontypes.AccessControl{}
+func (w *UserWorkload) txRead(params *TxParams) {
+	dataTx, isDataTx := params.tx.(bcdb.DataTxContext)
+	if !isDataTx {
+		w.lg.Fatal("attempt to read with non data TX")
+	}
+
 	for _, k := range params.readKeys {
-		record, metadata, err := w.read(tx, k)
+		record, metadata, err := w.read(dataTx, k)
 		if err != nil {
-			return err
+			w.lg.Errorf("failed to read key '%s': %s", k, err)
+			continue
 		}
 		record.Counter += 1
-		records[k] = record
+		params.readRecords[k] = record
 		if metadata != nil {
-			acl[k] = metadata.AccessControl
+			params.readAcl[k] = metadata.AccessControl
 		}
+	}
+}
+
+func (w *UserWorkload) txWrite(params *TxParams) {
+	dataTx, isDataTx := params.tx.(bcdb.DataTxContext)
+	if !isDataTx {
+		w.lg.Fatal("attempt to write with non data TX")
 	}
 
 	for _, k := range params.writeKeys {
-		if err := w.write(tx, k, records[k], params.acl); err != nil {
-			return err
+		err := w.write(dataTx, k, params.readRecords[k], params.writeAcl)
+		if err != nil {
+			w.lg.Errorf("failed to write key '%s': %s", k, err)
+			continue
 		}
 
-		if prevAcl := acl[k]; prevAcl != nil {
-			for user := range prevAcl.ReadWriteUsers {
+		if readAcl := params.readAcl[k]; readAcl != nil {
+			for user := range readAcl.ReadWriteUsers {
 				if user != w.userName {
 					params.needSign[user] = w.signers[user]
 				}
 			}
 		}
 	}
-
-	return nil
 }
 
 func (w *UserWorkload) key(line uint64) string {
@@ -267,49 +295,110 @@ func (w *UserWorkload) getAcl(userCount uint64) *oriontypes.AccessControl {
 	return acl
 }
 
-func (w *UserWorkload) getTxParams(args *OperationArgs) *TxParams {
-	return &TxParams{
-		sync:      args.writes > 0 && w.commitCounter.Size > 0 && w.commitCounter.Value == 0,
-		readKeys:  w.keyRange(args.reads),
-		writeKeys: w.keyRange(args.writes),
-		acl:       w.getAcl(args.aclUsers),
-		needSign:  map[string]crypto.Signer{},
-	}
-}
-
-func (w *UserWorkload) incCounter(writeWidth uint64) {
-	w.keyIndex.Inc(common.Max(1, writeWidth))
-	if writeWidth > 0 {
-		w.commitCounter.Inc(1)
-	}
-}
-
 func (w *UserWorkload) query(width uint64) error {
 	tx, err := w.userSession.Query()
-	if err != nil {
-		return err
-	}
+	w.Check(err)
 
-	return w.workload.Stats.TimeOperation(common.Query, func() error {
-		_, err := tx.GetDataByRange(tableName, w.key(w.keyIndex.Value), "", width)
-		// No need to consume the iterator since the values already fetched
-		return err
+	return w.workload.Stats.TimeOperation(common.Query, func() (uint64, error) {
+		it, err := tx.GetDataByRange(tableName, w.key(w.keyIndex.Value), "", width)
+		if err != nil {
+			return 0, err
+		}
+		more := it != nil
+		var count uint64 = 0
+		for more {
+			_, more, err = it.Next()
+			if err != nil {
+				break
+			}
+			count += 1
+		}
+
+		return count, err
 	})
 }
 
-func (w *UserWorkload) transaction(params *TxParams) error {
+func (w *UserWorkload) getTxParams(args *OperationArgs) *TxParams {
 	tx, err := w.userSession.DataTx()
-	if err != nil {
-		return err
+	w.Check(err)
+	return &TxParams{
+		tx:          tx,
+		commit:      args.writes > 0,
+		sync:        args.writes > 0 && w.commitCounter.Size > 0 && w.commitCounter.Value == 0,
+		readKeys:    w.keyRange(args.reads),
+		writeKeys:   w.keyRange(args.writes),
+		writeAcl:    w.getAcl(args.aclUsers),
+		needSign:    map[string]crypto.Signer{},
+		readRecords: map[string]*types.TableData{},
+		readAcl:     map[string]*oriontypes.AccessControl{},
 	}
-	defer w.workload.CheckAbort(tx)
-	if err = w.innerTx(tx, params); err != nil {
-		return err
+}
+
+func (w *UserWorkload) getWriteConflictTxParams(main *TxParams) *TxParams {
+	tx, err := w.userSession.DataTx()
+	w.Check(err)
+	return &TxParams{
+		tx:          tx,
+		commit:      true,
+		sync:        main.sync,
+		readKeys:    nil,
+		writeKeys:   main.writeKeys,
+		writeAcl:    main.writeAcl,
+		needSign:    map[string]crypto.Signer{},
+		readRecords: map[string]*types.TableData{},
+		readAcl:     map[string]*oriontypes.AccessControl{},
 	}
-	if len(params.writeKeys) == 0 {
-		return nil
+}
+
+func (w *UserWorkload) getReadConflictTxParams(main *TxParams) *TxParams {
+	tx, err := w.userSession.DataTx()
+	w.Check(err)
+	return &TxParams{
+		tx:          tx,
+		commit:      true,
+		sync:        main.sync,
+		readKeys:    main.writeKeys,
+		writeKeys:   nil,
+		writeAcl:    nil,
+		needSign:    map[string]crypto.Signer{},
+		readRecords: map[string]*types.TableData{},
+		readAcl:     map[string]*oriontypes.AccessControl{},
 	}
-	return w.commit(tx, params)
+}
+
+func (w *UserWorkload) transaction(op *OperationArgs) error {
+	mainParams := w.getTxParams(op)
+	params := []*TxParams{mainParams}
+	for i := uint64(0); i < op.conflicts; i++ {
+		p := w.getReadConflictTxParams(mainParams)
+		params = append(params, p)
+	}
+
+	for _, p := range params {
+		//goland:noinspection GoDeferInLoop
+		defer w.workload.CheckAbort(p.tx)
+	}
+
+	for _, p := range params {
+		w.txRead(p)
+	}
+
+	for _, p := range params {
+		w.txWrite(p)
+	}
+
+	var commitErr []error
+	for _, p := range params {
+		if err := w.txCommit(p); err != nil {
+			commitErr = append(commitErr, err)
+		}
+	}
+
+	if commitErr != nil {
+		return errors.Errorf("failed to commit: %s", commitErr)
+	}
+
+	return nil
 }
 
 func (w *UserWorkload) drawOperation(workType workload.WorkType) *OperationArgs {
@@ -325,18 +414,21 @@ func (w *UserWorkload) drawOperation(workType workload.WorkType) *OperationArgs 
 	return chooser.Pick().(*OperationArgs)
 }
 
-func (w *UserWorkload) Work(workType workload.WorkType) error {
+func (w *UserWorkload) Work(workType workload.WorkType) bool {
 	op := w.drawOperation(workType)
 
 	var err error
 	if op.queries > 0 {
 		err = w.query(op.queries)
 	} else {
-		err = w.transaction(w.getTxParams(op))
+		err = w.transaction(op)
 	}
 
-	if err == nil {
-		w.incCounter(op.writes)
+	if err != nil {
+		w.lg.Errorf("Op '%s' faild with error: %s", op.name, err)
+		return true
 	}
-	return err
+
+	w.keyIndex.Inc(common.Max(1, op.writes))
+	return false
 }

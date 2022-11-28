@@ -37,11 +37,12 @@ func GetCommitOp(sync bool) StatOperation {
 }
 
 type ClientStats struct {
-	lg        *logger.SugarLogger
-	registry  *prometheus.Registry
-	operation *prometheus.HistogramVec
-	backoff   prometheus.Histogram
-	mux       *http.ServeMux
+	lg             *logger.SugarLogger
+	registry       *prometheus.Registry
+	operation      *prometheus.HistogramVec
+	operationCount *prometheus.CounterVec
+	backoff        prometheus.Histogram
+	mux            *http.ServeMux
 }
 
 func (s *ClientStats) Check(err error) {
@@ -55,7 +56,6 @@ func (s *ClientStats) mustRegister(cs ...prometheus.Collector) {
 }
 
 func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
-	var LABELS = []string{"status", "operation"}
 	s := &ClientStats{
 		registry: prometheus.NewRegistry(),
 		lg:       lg,
@@ -64,7 +64,12 @@ func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
 			Name:      "latency_seconds",
 			Help:      "The latency (seconds) of an operation",
 			Buckets:   utils.TimeBuckets,
-		}, LABELS),
+		}, []string{"status", "operation"}),
+		operationCount: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "client",
+			Name:      "count",
+			Help:      "The number of operations operation",
+		}, []string{"status", "operation"}),
 		backoff: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: "client",
 			Name:      "backoff_seconds",
@@ -77,6 +82,7 @@ func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 		prometheus.NewGoCollector(),
 		s.operation,
+		s.operationCount,
 		s.backoff,
 	)
 	s.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
@@ -106,17 +112,22 @@ func (s *ClientStats) ObserveBackoff(duration time.Duration) {
 }
 
 func (s *ClientStats) ObserveOperationLatency(
-	operation StatOperation, duration time.Duration, err error,
+	operation StatOperation, duration time.Duration, count uint64, err error,
 ) {
-	s.operation.WithLabelValues(string(s.getStatus(err)), string(operation)).Observe(duration.Seconds())
+	labels := prometheus.Labels{
+		"status":    string(s.getStatus(err)),
+		"operation": string(operation),
+	}
+	s.operation.With(labels).Observe(duration.Seconds())
+	s.operationCount.With(labels).Add(float64(count))
 }
 
 func (s *ClientStats) TimeOperation(
-	operation StatOperation, callback func() error,
+	operation StatOperation, callback func() (uint64, error),
 ) error {
 	start := time.Now()
-	err := callback()
+	count, err := callback()
 	duration := time.Since(start)
-	s.ObserveOperationLatency(operation, duration, err)
+	s.ObserveOperationLatency(operation, duration, count, err)
 	return err
 }

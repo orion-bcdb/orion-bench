@@ -17,18 +17,18 @@ cluster:
     - 127.0.0.1
 workload:
   name: independent
-  user-count: 1_024
+  user-count: 16_000
   warmup-operations:
-    - operation: -write 1 -acl 0
+    - operation: -write 1000 -acl 0
   operations:
 #    - operation: -read 5
 #      weight: 10
 #    - operation: -query 50
 #      weight: 70
-    - operation: -write 1 -acl 0
+    - operation: -write 1000 -acl 0
       weight: 20
   parameters:
-    lines-per-user: 100
+    lines-per-user: 100_000
     commits-per-sync: 0
   session:
     tx-timeout: 10s

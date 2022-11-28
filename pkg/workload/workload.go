@@ -35,7 +35,8 @@ type Worker interface {
 }
 
 type UserWorker interface {
-	Work(w WorkType) error
+	// Work returns true if a backoff is required
+	Work(w WorkType) bool
 }
 
 type Workload struct {
@@ -306,13 +307,13 @@ func (w *Workload) RunUserWork(userIndex uint64, workType WorkType) {
 
 	w.waitStart.Wait()
 	for w.endTime.After(time.Now()) {
-		err := worker.Work(workType)
-		if err == nil {
+		needBackoff := worker.Work(workType)
+		if !needBackoff {
 			expBackoff.Reset()
 		} else {
 			duration := expBackoff.NextBackOff()
 			if duration == backoff.Stop {
-				w.Lg.Fatalf("Exponential backoff process stopped. Last error: %s", err)
+				w.Lg.Fatalf("Exponential backoff process stopped")
 			}
 			w.Stats.ObserveBackoff(duration)
 			time.Sleep(duration)
