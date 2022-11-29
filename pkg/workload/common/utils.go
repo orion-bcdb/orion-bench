@@ -33,9 +33,20 @@ type CyclicCounter struct {
 	Size  uint64
 }
 
-func (c *CyclicCounter) Inc(by uint64) {
+// Inc return true if a cycle is completed
+func (c *CyclicCounter) Inc(by uint64) bool {
 	if c.Size == 0 {
-		return
+		return true
 	}
-	c.Value = (c.Value + by) % c.Size
+	c.Value += by
+	cycleCompleted := c.Value >= c.Size
+	c.Value %= c.Size
+	return cycleCompleted
+}
+
+func (c *CyclicCounter) IsNextCompleteCycle(by uint64) bool {
+	if c.Size == 0 {
+		return true
+	}
+	return c.Value+by >= c.Size
 }

@@ -31,12 +31,17 @@ const Benchmark WorkType = "benchmark"
 
 type Worker interface {
 	Init()
-	MakeWorker(userIndex uint64) UserWorker
+	MakeWorker(userIndex uint64, workType WorkType) UserWorker
 }
 
+type WorkStatus uint
+
+const Ok WorkStatus = 0
+const NeedBackoff WorkStatus = 1
+const Enough WorkStatus = 2
+
 type UserWorker interface {
-	// Work returns true if a backoff is required
-	Work(w WorkType) bool
+	Work() WorkStatus
 }
 
 type Workload struct {
@@ -283,7 +288,10 @@ func (w *Workload) RunAllUsers(workType WorkType, duration time.Duration) {
 
 	w.waitStart.Done()
 	w.Lg.Infof("Work started.")
-	common.WaitTimeout(w.waitEnd, duration+time.Second*10)
+	timeout := common.WaitTimeout(w.waitEnd, duration+time.Minute)
+	if timeout {
+		w.Lg.Warning("Workers timeout.")
+	}
 	w.Lg.Infof("Work ended.")
 }
 
@@ -301,22 +309,24 @@ func NewExponentialBackOff(conf *types.BackoffConf) *backoff.ExponentialBackOff 
 }
 
 func (w *Workload) RunUserWork(userIndex uint64, workType WorkType) {
-	worker := w.Worker.MakeWorker(userIndex)
+	worker := w.Worker.MakeWorker(userIndex, workType)
 	expBackoff := NewExponentialBackOff(&w.Config.Workload.Session.Backoff)
 	w.waitInit.Done()
 
 	w.waitStart.Wait()
 	for w.endTime.After(time.Now()) {
-		needBackoff := worker.Work(workType)
-		if !needBackoff {
+		status := worker.Work()
+		if status == Ok {
 			expBackoff.Reset()
-		} else {
+		} else if status == NeedBackoff {
 			duration := expBackoff.NextBackOff()
 			if duration == backoff.Stop {
 				w.Lg.Fatalf("Exponential backoff process stopped")
 			}
 			w.Stats.ObserveBackoff(duration)
 			time.Sleep(duration)
+		} else if status == Enough {
+			break
 		}
 	}
 	w.waitEnd.Done()

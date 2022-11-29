@@ -5,7 +5,7 @@ server:
   provenance:
     disabled: true
   queuelength:
-    transaction: 100_000
+    transaction: 50_000
     reorderedtransactionbatch: 2
     # ignored
     block: 1
@@ -15,7 +15,7 @@ server:
     enabled: false
 blockcreation:
   maxblocksize: 100_000_000_000
-  maxtransactioncountperblock: 5_000
+  maxtransactioncountperblock: 50_000
   blocktimeout: 10s
 replication:
   tls:

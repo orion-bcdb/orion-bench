@@ -29,19 +29,19 @@ type Workload struct {
 }
 
 type UserWorkload struct {
-	workload         *workload.Workload
-	lg               *logger.SugarLogger
-	material         *material.BenchMaterial
-	userIndex        uint64
-	userName         string
-	userCrypto       *material.CryptoMaterial
-	userSession      bcdb.DBSession
-	keyIndex         common.CyclicCounter
-	commitCounter    common.CyclicCounter
-	operations       *weightedrand.Chooser
-	warmupOperations *weightedrand.Chooser
-	signerCount      uint64
-	signers          map[string]crypto.Signer
+	workload      *workload.Workload
+	lg            *logger.SugarLogger
+	workType      workload.WorkType
+	material      *material.BenchMaterial
+	userIndex     uint64
+	userName      string
+	userCrypto    *material.CryptoMaterial
+	userSession   bcdb.DBSession
+	keyIndex      common.CyclicCounter
+	commitCounter common.CyclicCounter
+	operations    *weightedrand.Chooser
+	signerCount   uint64
+	signers       map[string]crypto.Signer
 }
 
 type OperationArgs struct {
@@ -74,17 +74,23 @@ func (w *Workload) Init() {
 	w.workload.AddUsers(tableName)
 }
 
-func (w *Workload) MakeWorker(userIndex uint64) workload.UserWorker {
+func (w *Workload) MakeWorker(userIndex uint64, workType workload.WorkType) workload.UserWorker {
 	linesPerUser := uint64(w.workload.GetConfInt("lines-per-user"))
 	commitsPerSync := uint64(w.workload.GetConfInt("commits-per-sync"))
 	userPos := float64(userIndex) / float64(w.workload.Config.Workload.UserCount)
 	// We start the tx counter with an offset to prevent all users to synchronize concurrently
 	initialCommitCounter := uint64(userPos * float64(commitsPerSync))
 
+	cfg := w.workload.Config
+	if workType == workload.Warmup {
+		cfg.Workload.Session.TxTimeout = cfg.Workload.WarmupDuration
+	}
+
 	userCrypto := w.workload.Material.User(userIndex)
 	worker := &UserWorkload{
 		workload:    w.workload,
 		lg:          w.workload.Lg,
+		workType:    workType,
 		material:    w.workload.Material,
 		userIndex:   userIndex,
 		userName:    userCrypto.Name(),
@@ -102,12 +108,18 @@ func (w *Workload) MakeWorker(userIndex uint64) workload.UserWorker {
 		signerCount: 0,
 	}
 
-	worker.operations = worker.makeOperationChooser(w.workload.Config.Workload.Operations)
-	worker.warmupOperations = worker.makeOperationChooser(w.workload.Config.Workload.WarmupOperations)
+	switch workType {
+	case workload.Warmup:
+		worker.operations = worker.makeOperationChooser(cfg.Workload.WarmupOperations)
+	case workload.Benchmark:
+		fallthrough
+	default:
+		worker.operations = worker.makeOperationChooser(cfg.Workload.Operations)
+	}
 
 	// We start from 1 since we don't need the Signer of the current user
 	for i := uint64(1); i < worker.signerCount; i++ {
-		s := worker.material.User((userIndex + i) % w.workload.Config.Workload.UserCount).Signer()
+		s := worker.material.User((userIndex + i) % cfg.Workload.UserCount).Signer()
 		worker.signers[s.Identity()] = s
 	}
 
@@ -318,13 +330,22 @@ func (w *UserWorkload) query(width uint64) error {
 	})
 }
 
+func (w *UserWorkload) needCommit(writes uint64) bool {
+	return writes > 0
+}
+
+func (w *UserWorkload) needSync(writes uint64) bool {
+	return w.needCommit(writes) && ((w.workType == workload.Warmup && w.keyIndex.IsNextCompleteCycle(writes)) ||
+		(w.commitCounter.Size > 0 && w.commitCounter.Value == 0))
+}
+
 func (w *UserWorkload) getTxParams(args *OperationArgs) *TxParams {
 	tx, err := w.userSession.DataTx()
 	w.Check(err)
 	return &TxParams{
 		tx:          tx,
-		commit:      args.writes > 0,
-		sync:        args.writes > 0 && w.commitCounter.Size > 0 && w.commitCounter.Value == 0,
+		commit:      w.needCommit(args.writes),
+		sync:        w.needSync(args.writes),
 		readKeys:    w.keyRange(args.reads),
 		writeKeys:   w.keyRange(args.writes),
 		writeAcl:    w.getAcl(args.aclUsers),
@@ -401,21 +422,12 @@ func (w *UserWorkload) transaction(op *OperationArgs) error {
 	return nil
 }
 
-func (w *UserWorkload) drawOperation(workType workload.WorkType) *OperationArgs {
-	var chooser *weightedrand.Chooser
-	switch workType {
-	case workload.Warmup:
-		chooser = w.warmupOperations
-	case workload.Benchmark:
-		fallthrough
-	default:
-		chooser = w.operations
-	}
-	return chooser.Pick().(*OperationArgs)
+func (w *UserWorkload) drawOperation() *OperationArgs {
+	return w.operations.Pick().(*OperationArgs)
 }
 
-func (w *UserWorkload) Work(workType workload.WorkType) bool {
-	op := w.drawOperation(workType)
+func (w *UserWorkload) Work() workload.WorkStatus {
+	op := w.drawOperation()
 
 	var err error
 	if op.queries > 0 {
@@ -426,9 +438,12 @@ func (w *UserWorkload) Work(workType workload.WorkType) bool {
 
 	if err != nil {
 		w.lg.Errorf("Op '%s' faild with error: %s", op.name, err)
-		return true
+		return workload.NeedBackoff
 	}
 
-	w.keyIndex.Inc(common.Max(1, op.writes))
-	return false
+	cycleCompleted := w.keyIndex.Inc(common.Max(1, op.writes))
+	if w.workType == workload.Warmup && cycleCompleted {
+		return workload.Enough
+	}
+	return workload.Ok
 }
