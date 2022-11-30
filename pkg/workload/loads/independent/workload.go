@@ -5,6 +5,7 @@ package independent
 import (
 	"flag"
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"orion-bench/pkg/material"
@@ -13,7 +14,6 @@ import (
 	"orion-bench/pkg/workload"
 	"orion-bench/pkg/workload/common"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger-labs/orion-sdk-go/pkg/bcdb"
 	"github.com/hyperledger-labs/orion-server/pkg/crypto"
 	"github.com/hyperledger-labs/orion-server/pkg/logger"
@@ -50,19 +50,24 @@ type OperationArgs struct {
 	queries   uint64
 	writes    uint64
 	conflicts uint64
+	asserts   uint64
 	aclUsers  uint64
+	size      uint64
 }
 
 type TxParams struct {
-	tx          bcdb.TxContext
-	readKeys    []string
-	writeKeys   []string
-	writeAcl    *oriontypes.AccessControl
-	commit      bool
-	sync        bool
-	needSign    map[string]crypto.Signer
-	readRecords map[string]*types.TableData
-	readAcl     map[string]*oriontypes.AccessControl
+	tx           bcdb.TxContext
+	readKeys     []string
+	assertKeys   []string
+	writeKeys    []string
+	writeSize    uint64
+	writeAcl     *oriontypes.AccessControl
+	commit       bool
+	sync         bool
+	needSign     map[string]crypto.Signer
+	readRecords  map[string][]byte
+	writeRecords map[string][]byte
+	readAcl      map[string]*oriontypes.AccessControl
 }
 
 func New(parent *workload.Workload) workload.Worker {
@@ -138,8 +143,10 @@ func (w *UserWorkload) parseOperation(operation string) *OperationArgs {
 	op.Uint64Var(&args.reads, "read", 0, "read X keys")
 	op.Uint64Var(&args.queries, "query", 0, "query X keys")
 	op.Uint64Var(&args.writes, "write", 0, "write X keys")
+	op.Uint64Var(&args.asserts, "assert", 0, "assert X keys")
 	op.Uint64Var(&args.conflicts, "conflict", 0, "run X concurrent conflicting reads TXs")
 	op.Uint64Var(&args.aclUsers, "acl", 0, "require sig of X users")
+	op.Uint64Var(&args.size, "size", 8, "values size")
 	w.Check(op.Parse(strings.Split(operation, " ")))
 	if args.reads == 0 && args.queries == 0 && args.writes == 0 {
 		w.lg.Fatalf("an operation must include reads/writes/query.")
@@ -152,6 +159,12 @@ func (w *UserWorkload) parseOperation(operation string) *OperationArgs {
 	}
 	if args.conflicts > 0 && args.writes == 0 {
 		w.lg.Fatalf("operation with conflicts must have writes.")
+	}
+	if args.asserts > 0 && args.reads > 0 {
+		w.lg.Fatalf("operation cannot have reads and assert togather.")
+	}
+	if args.size == 0 {
+		args.size = 8
 	}
 
 	return args
@@ -172,7 +185,7 @@ func (w *UserWorkload) makeOperationChooser(ops []types.WorkloadOperation) *weig
 	return chooser
 }
 
-func (w *UserWorkload) read(tx bcdb.DataTxContext, key string) (*types.TableData, *oriontypes.Metadata, error) {
+func (w *UserWorkload) read(tx bcdb.DataTxContext, key string) ([]byte, *oriontypes.Metadata, error) {
 	var rawRecord []byte
 	var metadata *oriontypes.Metadata
 	err := w.workload.Stats.TimeOperation(common.Read, func() (uint64, error) {
@@ -183,25 +196,14 @@ func (w *UserWorkload) read(tx bcdb.DataTxContext, key string) (*types.TableData
 	if err != nil {
 		return nil, nil, err
 	}
-
-	readRecord := &types.TableData{}
-	if rawRecord != nil {
-		w.Check(proto.Unmarshal(rawRecord, readRecord))
-	}
-	return readRecord, metadata, nil
+	return rawRecord, metadata, nil
 }
 
 func (w *UserWorkload) write(
-	tx bcdb.DataTxContext, key string, value *types.TableData, acl *oriontypes.AccessControl,
+	tx bcdb.DataTxContext, key string, value []byte, acl *oriontypes.AccessControl,
 ) error {
-	var rawRecord []byte
-	if value != nil {
-		raw, err := proto.Marshal(value)
-		w.Check(err)
-		rawRecord = raw
-	}
 	return w.workload.Stats.TimeOperation(common.Write, func() (uint64, error) {
-		return 1, tx.Put(tableName, key, rawRecord, acl)
+		return 1, tx.Put(tableName, key, value, acl)
 	})
 }
 
@@ -221,6 +223,7 @@ func (w *UserWorkload) txCommit(params *TxParams) error {
 	err := w.workload.Stats.TimeOperation(common.GetCommitOp(params.sync), func() (uint64, error) {
 		return 1, w.workload.CommitSync(params.tx, params.sync)
 	})
+	w.workload.Stats.ObserveContentSize(params.calcTotalWriteSize(), err)
 
 	if err != nil {
 		w.commitCounter.Inc(1)
@@ -241,10 +244,23 @@ func (w *UserWorkload) txRead(params *TxParams) {
 			w.lg.Errorf("failed to read key '%s': %s", k, err)
 			continue
 		}
-		record.Counter += 1
 		params.readRecords[k] = record
 		if metadata != nil {
 			params.readAcl[k] = metadata.AccessControl
+		}
+	}
+}
+
+func (w *UserWorkload) txAssert(params *TxParams) {
+	dataTx, isDataTx := params.tx.(bcdb.DataTxContext)
+	if !isDataTx {
+		w.lg.Fatal("attempt to read with non data TX")
+	}
+
+	for _, k := range params.assertKeys {
+		err := dataTx.AssertRead(tableName, k, &oriontypes.Version{})
+		if err != nil {
+			w.lg.Errorf("failed to read key '%s': %s", k, err)
 		}
 	}
 }
@@ -256,11 +272,14 @@ func (w *UserWorkload) txWrite(params *TxParams) {
 	}
 
 	for _, k := range params.writeKeys {
-		err := w.write(dataTx, k, params.readRecords[k], params.writeAcl)
+		value := make([]byte, params.writeSize)
+		rand.Read(value)
+		err := w.write(dataTx, k, value, params.writeAcl)
 		if err != nil {
 			w.lg.Errorf("failed to write key '%s': %s", k, err)
 			continue
 		}
+		params.writeRecords[k] = value
 
 		if readAcl := params.readAcl[k]; readAcl != nil {
 			for user := range readAcl.ReadWriteUsers {
@@ -343,31 +362,45 @@ func (w *UserWorkload) getTxParams(args *OperationArgs) *TxParams {
 	tx, err := w.userSession.DataTx()
 	w.Check(err)
 	return &TxParams{
-		tx:          tx,
-		commit:      w.needCommit(args.writes),
-		sync:        w.needSync(args.writes),
-		readKeys:    w.keyRange(args.reads),
-		writeKeys:   w.keyRange(args.writes),
-		writeAcl:    w.getAcl(args.aclUsers),
-		needSign:    map[string]crypto.Signer{},
-		readRecords: map[string]*types.TableData{},
-		readAcl:     map[string]*oriontypes.AccessControl{},
+		tx:           tx,
+		commit:       w.needCommit(args.writes),
+		sync:         w.needSync(args.writes),
+		readKeys:     w.keyRange(args.reads),
+		assertKeys:   w.keyRange(args.asserts),
+		writeKeys:    w.keyRange(args.writes),
+		writeAcl:     w.getAcl(args.aclUsers),
+		writeSize:    args.size,
+		needSign:     map[string]crypto.Signer{},
+		readRecords:  map[string][]byte{},
+		writeRecords: map[string][]byte{},
+		readAcl:      map[string]*oriontypes.AccessControl{},
 	}
+}
+
+func (t *TxParams) calcTotalWriteSize() uint64 {
+	var size uint64 = 0
+	for k, v := range t.writeRecords {
+		size += uint64(len(k))
+		size += uint64(len(v))
+	}
+	return size
 }
 
 func (w *UserWorkload) getWriteConflictTxParams(main *TxParams) *TxParams {
 	tx, err := w.userSession.DataTx()
 	w.Check(err)
 	return &TxParams{
-		tx:          tx,
-		commit:      true,
-		sync:        main.sync,
-		readKeys:    nil,
-		writeKeys:   main.writeKeys,
-		writeAcl:    main.writeAcl,
-		needSign:    map[string]crypto.Signer{},
-		readRecords: map[string]*types.TableData{},
-		readAcl:     map[string]*oriontypes.AccessControl{},
+		tx:           tx,
+		commit:       true,
+		sync:         main.sync,
+		readKeys:     nil,
+		writeKeys:    main.writeKeys,
+		writeAcl:     main.writeAcl,
+		writeSize:    main.writeSize,
+		needSign:     map[string]crypto.Signer{},
+		readRecords:  map[string][]byte{},
+		writeRecords: map[string][]byte{},
+		readAcl:      map[string]*oriontypes.AccessControl{},
 	}
 }
 
@@ -375,15 +408,17 @@ func (w *UserWorkload) getReadConflictTxParams(main *TxParams) *TxParams {
 	tx, err := w.userSession.DataTx()
 	w.Check(err)
 	return &TxParams{
-		tx:          tx,
-		commit:      true,
-		sync:        main.sync,
-		readKeys:    main.writeKeys,
-		writeKeys:   nil,
-		writeAcl:    nil,
-		needSign:    map[string]crypto.Signer{},
-		readRecords: map[string]*types.TableData{},
-		readAcl:     map[string]*oriontypes.AccessControl{},
+		tx:           tx,
+		commit:       true,
+		sync:         main.sync,
+		readKeys:     main.writeKeys,
+		writeKeys:    nil,
+		writeAcl:     nil,
+		writeSize:    main.writeSize,
+		needSign:     map[string]crypto.Signer{},
+		readRecords:  map[string][]byte{},
+		writeRecords: map[string][]byte{},
+		readAcl:      map[string]*oriontypes.AccessControl{},
 	}
 }
 
@@ -402,6 +437,10 @@ func (w *UserWorkload) transaction(op *OperationArgs) error {
 
 	for _, p := range params {
 		w.txRead(p)
+	}
+
+	for _, p := range params {
+		w.txAssert(p)
 	}
 
 	for _, p := range params {

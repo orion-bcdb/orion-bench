@@ -19,6 +19,13 @@ var TimeBuckets = []float64{
 	math.Inf(1),
 }
 
+var SizeBase2Buckets = []float64{
+	0, 1 << 3, 1 << 6, 1 << 8, 1 << 9,
+	1 << 10, 1 << 12, 1 << 14, 1 << 16, 1 << 18,
+	1 << 20, 1 << 22, 1 << 24, 1 << 26, 1 << 28,
+	1 << 30, math.Inf(1),
+}
+
 var DataSize = prometheus.NewGauge(prometheus.GaugeOpts{
 	Namespace: "data",
 	Name:      "size_bytes",

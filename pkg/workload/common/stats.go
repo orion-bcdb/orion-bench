@@ -42,6 +42,7 @@ type ClientStats struct {
 	operation      *prometheus.HistogramVec
 	operationCount *prometheus.CounterVec
 	backoff        prometheus.Histogram
+	contentSize    *prometheus.HistogramVec
 	mux            *http.ServeMux
 }
 
@@ -76,6 +77,12 @@ func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
 			Help:      "The backoff (seconds) of a worker",
 			Buckets:   utils.TimeBuckets,
 		}),
+		contentSize: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: "client",
+			Name:      "content_size_bytes",
+			Help:      "The backoff (seconds) of a worker",
+			Buckets:   utils.SizeBase2Buckets,
+		}, []string{"status"}),
 		mux: http.NewServeMux(),
 	}
 	s.mustRegister(
@@ -84,6 +91,7 @@ func RegisterClientStats(lg *logger.SugarLogger) *ClientStats {
 		s.operation,
 		s.operationCount,
 		s.backoff,
+		s.contentSize,
 	)
 	s.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
 		s.registry, promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}),
@@ -109,6 +117,10 @@ func (s *ClientStats) getStatus(err error) StatStatus {
 
 func (s *ClientStats) ObserveBackoff(duration time.Duration) {
 	s.backoff.Observe(duration.Seconds())
+}
+
+func (s *ClientStats) ObserveContentSize(size uint64, err error) {
+	s.contentSize.WithLabelValues(string(s.getStatus(err))).Observe(float64(size))
 }
 
 func (s *ClientStats) ObserveOperationLatency(
