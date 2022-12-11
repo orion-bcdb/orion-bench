@@ -25,9 +25,9 @@ workload:
 #      weight: 10
 #    - operation: -query 50
 #      weight: 70
-    - operation: -assert 1 -write 1 -acl 0 -size 8
-      weight: 20
-    - operation: -write 1 -acl 0 -size 8
+#    - operation: -assert 1 -write 1 -acl 0 -size 8
+#      weight: 20
+    - operation: -read 1 -write 1 -acl 0 -size 8
       weight: 20
   parameters:
     lines-per-user: 1_000

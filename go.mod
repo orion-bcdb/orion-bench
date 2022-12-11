@@ -9,7 +9,6 @@ replace github.com/hyperledger-labs/orion-sdk-go => ../orion-sdk-go
 require (
 	github.com/cenkalti/backoff v2.1.1+incompatible
 	github.com/creasty/defaults v1.6.0
-	github.com/golang/protobuf v1.5.2
 	github.com/hyperledger-labs/orion-sdk-go v0.2.5
 	github.com/hyperledger-labs/orion-server v0.2.6-0.20220828084308-c4591bc4f62e
 	github.com/mroth/weightedrand v1.0.0

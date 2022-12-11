@@ -1,4 +1,6 @@
 BIN = bin
+#GO = go1.19.4
+GO = go
 ALL_FILES = $(shell find . -type f -name "*.go")
 
 .DEFAULT_GOAL := binary
@@ -14,7 +16,7 @@ clean:
 	rm -rf $(BIN)
 
 $(BIN)/orion-bench: $(BIN) $(ALL_FILES)
-	go build -o $(BIN)/orion-bench cmd/orion-bench/main.go
+	$(GO) build -o $(BIN)/orion-bench cmd/orion-bench/main.go
 
 proto:
 	protoc --go_out=. protos/*.proto
