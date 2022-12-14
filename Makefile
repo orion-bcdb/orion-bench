@@ -17,6 +17,3 @@ clean:
 
 $(BIN)/orion-bench: $(BIN) $(ALL_FILES)
 	$(GO) build -o $(BIN)/orion-bench cmd/orion-bench/main.go
-
-proto:
-	protoc --go_out=. protos/*.proto
