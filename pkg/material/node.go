@@ -162,9 +162,13 @@ func (s *NodeMaterial) GenerateServerConfigFile() {
 		Method: "genesis",
 		File:   s.SharedConfPath(),
 	}
-	localConfig.Prometheus = config.NetworkConf{
-		Address: "0.0.0.0",
-		Port:    uint32(s.PrometheusPort),
+	localConfig.Prometheus = config.PrometheusConf{
+		Enabled: true,
+		Network: config.NetworkConf{
+			Address: "0.0.0.0",
+			Port:    uint32(s.PrometheusPort),
+		},
+		TLS: s.TLS(),
 	}
 
 	s.Check(setup.WriteLocalConfig(&localConfig, s.LocalConfPath()))

@@ -1,6 +1,6 @@
+# Allow setting different go version from the command line. E.g.,`make GO=go1.19.4 binary`
+GO ?= go
 BIN = bin
-#GO = go1.19.4
-GO = go
 ALL_FILES = $(shell find . -type f -name "*.go")
 
 .DEFAULT_GOAL := binary
