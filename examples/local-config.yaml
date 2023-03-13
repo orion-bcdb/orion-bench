@@ -20,5 +20,5 @@ blockcreation:
 replication:
   tls:
     enabled: false
-experimental:
-  disablecommitphasesigvalidation: false
+#experimental:
+#  disablecommitphasesigvalidation: false
