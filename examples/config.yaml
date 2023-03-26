@@ -1,23 +1,53 @@
 # Example benchmark configuration
+# The benchmark and cluster will report in this log level
 log-level: info
 path:
+  # The location of the generated crypto material
   material: /tmp/orion-benchmark/material
+  # The location that Orion will store its data
   data: /tmp/orion-benchmark/data
+  # The location that prometheus will store its collected data
   metrics: /tmp/orion-benchmark/metrics
+  # A path of the default Orion local and shared configuration, and prometheus configuration.
+  # These files do not contain the complete configuration, just the default values.
+  # The missing configurations is set by the benchmark tool when generating the server's material.
   default-local-conf: local-config.yaml
   default-shared-conf: shared-config.yaml
   default-prometheus-conf: prometheus.yaml
 cluster:
-  # Each node will serve at port+rank
+  # Each Orion node will serve at address:port+rank
+  # For example, node 1 will:
+  #  - serve clients at address:6001
+  #  - communicate with peers via address:7001
+  #  - report metrics at address:2001
   node-base-port: 6000
   peer-base-port: 7000
   prometheus-base-port: 2000
+  # When running a node directly via this tool, the data size of the server will also be collected at this interval.
   data-size-collection-interval: 10s
+  # The list of cluster nodes. The same ip/hostname can be used multiple times. This will start multiple nodes
+  # on the same host. The nodes' rank is determined by their position in this list.
   nodes:
     - 127.0.0.1
 workload:
+  # The workload that will be executed. See workload var in pkg/config/config.go.
   name: independent
+  # The number of unique users in this experiment. Each use will run its workload in parallel.
   user-count: 1_000
+  # Warmup and benchmark operations. Each operation has two parameters:
+  #   - operation: a free form string that describes the operation.
+  #   - weight: the weight of this operation.
+  # The interpretation of these parameters is dependent on the workload.
+  # For the "independent" workload, it is as follows:
+  # Each operation may have the following properties:
+  #   - read <number of read keys per TX>
+  #   - write <number of written keys per TX>
+  #   - assert <number of wrongly asserted keys per TX> (invalidates the TX)
+  #   - acl <number of required signatures per TX>
+  #    - conflict <number of conflicting TXs in parallel to each TX>
+  #   - size <the value size>
+  #   - query <the number of keys to query> (cannot be set together with the other parameters)
+  # The weight is interpreted as probability: (operation weight) / (sum of all weights)
   warmup-operations:
     - operation: -write 1_000 -acl 0 -size 8
   operations:
@@ -29,22 +59,43 @@ workload:
 #      weight: 20
     - operation: -read 1 -write 1 -acl 0 -size 8
       weight: 20
+  # Additional workload specific parameters.
+  # The following example parameters are for the "independent" workload.
   parameters:
+    # Number of unique keys each user have throughput the entire experiment.
+    # Each user will insert all its keys in the warmup period, and read/query/update them in the benchmark period.
     lines-per-user: 1_000
+    # Number of commits per user before executing a synchronized commit.
+    # I.e., waiting for the TX to be inserted to the blockchain.
+    # Zero value means the benchmark will never execute a synchronized commit.
+    # In the warmup period, the last commit is always synchronized, regardless of this setting.
     commits-per-sync: 0
   session:
+    # Time to wait for TX commit
     tx-timeout: 2m
+    # Time to wait for a query results
     query-timeout: 1m
+    # By default, each client will run operations one after the other.
+    # However, in case of an error, the workload can choose to wait before running the next operation.
+    # For example, when the server is too busy.
+    # In such case, an exponential backoff is employed with the following parameters:
     backoff:
       initial-interval: 10ms
       max-interval: 5s
+  # The maximal time to run the workload.
+  # The benchmark will execute operations until the workload generator returns "enough" or for the following duration.
   duration: 3m
+  # The maximal time to run the warmup.
+  # The benchmark will execute operations until the workload generator returns "enough" or for the following duration.
   warmup-duration: 5h
-  # Each worker will serve at port+rank
+  # Each benchmark worker will report metrics at port+rank
   prometheus-base-port: 3000
-  # Each worker might run many parallel workloads
+  # The list of worker nodes. The same ip/hostname can be used multiple times. This will start multiple workers
+  # on the same host. The workers' rank is determined by their position in this list.
+  # Each such worker will be assigned with a portion of the users from the total number of users mentioned above.
   workers:
     - 127.0.0.1
     - 127.0.0.1
 prometheus:
+  # The prometheus server listen address that will be used when running prometheus using this tool CMD.
   listen-address: 0.0.0.0:9099

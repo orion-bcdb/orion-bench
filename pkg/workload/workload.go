@@ -24,26 +24,44 @@ import (
 	oriontypes "github.com/hyperledger-labs/orion-server/pkg/types"
 )
 
+// WorkType is used to define if a worker should run the warmup procedure or the actual workload.
 type WorkType string
 
 const Warmup WorkType = "warmup"
 const Benchmark WorkType = "benchmark"
 
+// Worker implements a workload generator.
+// It is responsible to initialize the experiment and creating the users' workers.
 type Worker interface {
+	// Init should initialize the experiment. It is called only once from a single thread.
+	// A common initialization is admin TXs such as creating the DB tables and adding all the users.
 	Init()
+	// MakeWorker create a UserWorker instance for each user (userIndex) that is assigned to this worker.
+	// This worker should execute a single user operations on the basis of the workType parameter (warmup of benchmark).
 	MakeWorker(userIndex uint64, workType WorkType) UserWorker
 }
 
+// WorkStatus is returned after a worker executed a work iteration.
 type WorkStatus uint
 
+// Ok should be returned when the work iteration was executed with no issues.
 const Ok WorkStatus = 0
+
+// NeedBackoff should be returned when encountering a server error that indicates it cannot handle the current workload.
 const NeedBackoff WorkStatus = 1
+
+// Enough should be returned when there is no need to continue running the workload.
+// E.g., when WorkType is warmup and all the keys have been added.
 const Enough WorkStatus = 2
 
+// UserWorker implements a single client's workload generator.
 type UserWorker interface {
+	// Work executes a single user operation drawn from the list of operations that were defined in the configuration.
+	// It should return a valid WorkStatus as described above.
 	Work() WorkStatus
 }
 
+// Workload orchestrates the workload generation. It is used to initialize the Worker implementation.
 type Workload struct {
 	Lg         *logger.SugarLogger
 	Config     *types.BenchmarkConf
